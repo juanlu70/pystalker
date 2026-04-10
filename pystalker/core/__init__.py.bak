@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""
+PyStalker - Stock Charting Application
+A Python/PyQt6 port of Qtstalker
+"""
+from .gui.main_window import PyStalkerWindow
+
+__all__ = ['PyStalkerWindow']
+__version__ = '0.1.0'
