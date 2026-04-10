@@ -64,6 +64,8 @@ class IndicatorDialog(QDialog):
         self.color_label = QLabel()
         self.color_label.setFixedSize(60, 30)
         self.color_label.setStyleSheet(f"background-color: {self.selected_color}; border: 1px solid white;")
+        self.color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.color_label.mousePressEvent = lambda e: self.choose_color()
         color_layout.addWidget(self.color_label)
         
         self.color_btn = QPushButton("Choose Color")
@@ -179,10 +181,11 @@ class EditIndicatorsDialog(QDialog):
     def __init__(self, indicators, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Indicators")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(550)
         self.setMinimumHeight(400)
         
-        self.indicators = indicators.copy()
+        import copy
+        self.indicators = copy.deepcopy(indicators)  # Deep copy to preserve all fields
         self.result_data = None
         
         self.init_ui()
@@ -190,13 +193,15 @@ class EditIndicatorsDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        list_group = QGroupBox("Indicators on Chart")
+        list_group = QGroupBox("Indicators on Chart (Click to toggle visibility)")
         list_layout = QVBoxLayout()
         
         self.indicator_list = QListWidget()
         for ind in self.indicators:
+            visible_icon = "👁" if ind.get('visible', True) else "🚫"
             color_box = f" [{ind.get('color', '#FFFFFF')}]"
-            self.indicator_list.addItem(f"{ind['name']}{color_box} - {ind.get('params', {})}")
+            display_name = ind.get('name', ind.get('indicator_name', 'Unknown'))
+            self.indicator_list.addItem(f"{visible_icon} {display_name}{color_box} - {ind.get('params', {})}")
         list_layout.addWidget(self.indicator_list)
         
         btn_layout = QHBoxLayout()
@@ -231,8 +236,10 @@ class EditIndicatorsDialog(QDialog):
         all_indicators = IndicatorManager.ALL_INDICATORS
         
         dialog = IndicatorDialog(self)
-        dialog.type_combo.setCurrentText(ind['name'])
-        dialog.on_indicator_changed(ind['name'])
+        # Use the base indicator name for the combo
+        indicator_name = ind.get('indicator_name', ind.get('name', 'Unknown'))
+        dialog.type_combo.setCurrentText(indicator_name)
+        dialog.on_indicator_changed(indicator_name)
         
         if ind.get('color'):
             dialog.selected_color = ind['color']
@@ -243,13 +250,25 @@ class EditIndicatorsDialog(QDialog):
                 dialog.param_widgets[param_name].setValue(value)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Preserve all fields from original indicator
             self.indicators[current_row] = {
-                'name': dialog.get_indicator_name(),
+                'name': ind.get('name', dialog.get_indicator_name()),
+                'indicator_name': dialog.get_indicator_name(),
                 'type': IndicatorManager.ALL_INDICATORS.get(dialog.get_indicator_name(), {}).get('type', 'overlay'),
                 'params': dialog.get_indicator_params(),
-                'color': dialog.get_indicator_color()
+                'color': dialog.get_indicator_color(),
+                'visible': ind.get('visible', True)  # Preserve visibility state
             }
             self.refresh_list()
+    
+    def toggle_visibility(self, item):
+        current_row = self.indicator_list.currentRow()
+        if current_row < 0:
+            return
+        
+        ind = self.indicators[current_row]
+        ind['visible'] = not ind.get('visible', True)
+        self.refresh_list()
     
     def remove_selected(self):
         current_row = self.indicator_list.currentRow()
@@ -260,8 +279,10 @@ class EditIndicatorsDialog(QDialog):
     def refresh_list(self):
         self.indicator_list.clear()
         for ind in self.indicators:
+            visible_icon = "👁" if ind.get('visible', True) else "🚫"
             color_box = f" [{ind.get('color', '#FFFFFF')}]"
-            self.indicator_list.addItem(f"{ind['name']}{color_box} - {ind.get('params', {})}")
+            display_name = ind.get('name', ind.get('indicator_name', 'Unknown'))
+            self.indicator_list.addItem(f"{visible_icon} {display_name}{color_box} - {ind.get('params', {})}")
     
     def accept_changes(self):
         self.result_data = self.indicators

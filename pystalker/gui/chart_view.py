@@ -2,13 +2,71 @@
 PyStalker - Chart View using PyQtGraph for high performance
 """
 import numpy as np
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QWheelEvent, QMouseEvent, QKeyEvent
 import pyqtgraph as pg
 import pandas as pd
+import numpy as np
 
 from ..core.indicators import PlotLine
+
+
+class OverlayLine:
+    def __init__(self, plot_line, visible=True, unique_name=None):
+        self.plot_line = plot_line
+        self.visible = visible
+        self.unique_name = unique_name or plot_line.name
+
+
+class IndicatorLegendItem(QWidget):
+    clicked = pyqtSignal()
+    
+    def __init__(self, name, visible=True, color='#FFFFFF', parent=None):
+        super().__init__(parent)
+        self.name = name
+        self.visible = visible
+        self.color = color
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(5)
+        
+        self.visible_btn = QPushButton("👁" if visible else "🚫")
+        self.visible_btn.setFixedSize(30, 25)
+        self.visible_btn.clicked.connect(self.toggle_visibility)
+        layout.addWidget(self.visible_btn)
+        
+        self.color_label = QLabel()
+        self.color_label.setFixedSize(20, 20)
+        self.color_label.setStyleSheet(f"background-color: {color}; border: 1px solid white;")
+        layout.addWidget(self.color_label)
+        
+        self.name_label = QLabel(name)
+        self.name_label.setStyleSheet("color: white;")
+        layout.addWidget(self.name_label)
+        
+        layout.addStretch()
+        
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+    
+    def toggle_visibility(self):
+        self.visible = not self.visible
+        self.visible_btn.setText("👁" if self.visible else "🚫")
+        self.clicked.emit()
+    
+    def set_visible_state(self, visible):
+        self.visible = visible
+        self.visible_btn.setText("👁" if visible else "🚫")
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.toggle_visibility()
+
+
+class PriceAxisItem(pg.AxisItem):
+    def tickStrings(self, values, scale, spacing):
+        return [f'{v:.2f}' for v in values]
 
 
 class TrendLineItem(pg.GraphicsObject):
@@ -55,7 +113,9 @@ class TrendLineItem(pg.GraphicsObject):
 
 class ChartView(QWidget):
     indicator_added = pyqtSignal(str)
+    indicator_visibility_changed = pyqtSignal(str, bool)  # indicator_name, visible
     range_changed = pyqtSignal(float, float, object)
+    colors_changed = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,6 +128,9 @@ class ChartView(QWidget):
         self.trendline_points = []
         self.snap_mode = None
         self.preview_line = None
+        self.bull_color = '#26a69a'
+        self.bear_color = '#ef5350'
+        self._ignore_context_menu = False  # Prevent context menu re-triggering
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -80,15 +143,59 @@ class ChartView(QWidget):
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('#1e1e1e')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.setLabel('left', 'Price', color='w')
-        self.plot_widget.setLabel('bottom', 'Time', color='w')
+        
+        left_axis = self.plot_widget.getAxis('left')
+        left_axis.setStyle(showValues=False)
+        
+        price_axis = PriceAxisItem(orientation='right')
+        price_axis.setStyle(showValues=True)
+        price_axis.setZValue(1000)
+        self.plot_widget.setAxisItems({'right': price_axis})
+        
+        self.view_box = self.plot_widget.plotItem.vb
+        
+        self.plot_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.plot_widget.customContextMenuRequested.connect(self.show_context_menu)
+        
+        self.plot_widget.plotItem.legend = None
+        self.legend_items = []
         
         self.view_box = self.plot_widget.plotItem.vb
         
         self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
         self.view_box.sigYRangeChanged.connect(self.update_info_position)
+        self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
+        self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
+        
+        self.volume_view_box = pg.ViewBox()
+        self.volume_view_box.setYRange(0, 1, padding=0)
+        self.plot_widget.scene().addItem(self.volume_view_box)
+        
+        self.volume_view_box.setYRange(0, 1, padding=0)
+        self.plot_widget.scene().addItem(self.volume_view_box)
+        
+        self.plot_widget.plotItem.vb.setXLink(self.volume_view_box)
+        
+        self.plot_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.plot_widget.customContextMenuRequested.connect(self.show_context_menu)
+        
+        self.view_box = self.plot_widget.plotItem.vb
+        
+        self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
+        self.view_box.sigYRangeChanged.connect(self.update_info_position)
+        self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
+        self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
         
         layout.addWidget(self.plot_widget)
+        
+        # Custom indicator legend panel
+        self.legend_panel = QWidget()
+        self.legend_panel.setStyleSheet("background-color: #2a2a2a;")
+        self.legend_layout = QHBoxLayout(self.legend_panel)
+        self.legend_layout.setContentsMargins(5, 2, 5, 2)
+        self.legend_layout.setSpacing(5)
+        self.legend_items = []
+        layout.addWidget(self.legend_panel)
         
         self.info_text = pg.TextItem("", color='#FFFF00', anchor=(0, 0))
         self.info_text.setFont(pg.QtGui.QFont('monospace', 10))
@@ -99,7 +206,7 @@ class ChartView(QWidget):
         
         self.candlestick_item = None
         self.volume_item = None
-        self.visible_bars = 200
+        self.visible_bars = 450
         self.scroll_speed = 50
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -134,6 +241,54 @@ class ChartView(QWidget):
         else:
             super().keyPressEvent(event)
     
+    def show_context_menu(self, pos):
+        # Prevent context menu from showing multiple times
+        if self._ignore_context_menu:
+            return
+        
+        from PyQt6.QtWidgets import QMenu, QColorDialog
+        
+        menu = QMenu(self)
+        
+        change_bull_color = menu.addAction("Change Bull Color")
+        change_bear_color = menu.addAction("Change Bear Color")
+        
+        action = menu.exec(self.plot_widget.mapToGlobal(pos))
+        
+        if action == change_bull_color:
+            menu.close()
+            self._ignore_context_menu = True
+            color = QColorDialog.getColor(pg.QtGui.QColor(self.bull_color), self, "Select Bull Color")
+            if color.isValid():
+                self.bull_color = color.name()
+                self.plot_candlesticks(self.df, self.symbol)
+                self.colors_changed.emit()
+            # Reset flag after a short delay to prevent re-triggering
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+        elif action == change_bear_color:
+            menu.close()
+            self._ignore_context_menu = True
+            color = QColorDialog.getColor(pg.QtGui.QColor(self.bear_color), self, "Select Bear Color")
+            if color.isValid():
+                self.bear_color = color.name()
+                self.plot_candlesticks(self.df, self.symbol)
+                self.colors_changed.emit()
+            # Reset flag after a short delay to prevent re-triggering
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+        elif action == change_bear_color:
+            menu.close()  # Close menu before opening dialog
+            color = QColorDialog.getColor(pg.QtGui.QColor(self.bear_color), self, "Select Bear Color")
+            if color.isValid():
+                self.bear_color = color.name()
+                self.plot_candlesticks(self.df, self.symbol)
+                self.colors_changed.emit()
+    
+    def set_colors(self, bull_color: str, bear_color: str):
+        self.bull_color = bull_color
+        self.bear_color = bear_color
+    
     def cancel_trendline(self):
         self.drawing_trendline = False
         self.trendline_points = []
@@ -156,7 +311,8 @@ class ChartView(QWidget):
         super().mouseMoveEvent(event)
     
     def handle_trendline_click(self, event):
-        pos = self.plot_widget.plotItem.vb.mapSceneToView(event.pos())
+        from PyQt6.QtCore import QPointF
+        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
         x = pos.x()
         y = pos.y()
         
@@ -203,7 +359,8 @@ class ChartView(QWidget):
             self.update_info_position()
     
     def handle_trendline_move(self, event):
-        pos = self.plot_widget.plotItem.vb.mapSceneToView(event.pos())
+        from PyQt6.QtCore import QPointF
+        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
         x = pos.x()
         y = pos.y()
         
@@ -329,7 +486,7 @@ class ChartView(QWidget):
             ))
         
         candle_data_to_use = candle_data
-        self.candlestick_item = CandlestickItem(candle_data_to_use)
+        self.candlestick_item = CandlestickItem(candle_data_to_use, self.bull_color, self.bear_color)
         self.plot_widget.addItem(self.candlestick_item)
         
         if 'Volume' in df.columns:
@@ -338,13 +495,14 @@ class ChartView(QWidget):
                 close = float(df['Close'].iloc[i])
                 open_val = float(df['Open'].iloc[i])
                 vol = float(df['Volume'].iloc[i])
-                color = '#26a69a' if close >= open_val else '#ef5350'
+                color = self.bull_color if close >= open_val else self.bear_color
                 volume_data.append((i, vol, color))
             
             self.volume_item = VolumeItem(volume_data)
             self.plot_widget.addItem(self.volume_item)
         
-        for plot_line in self.overlay_lines:
+        for overlay_line in self.overlay_lines:
+            plot_line = overlay_line.plot_line
             if len(plot_line.data) == len(df):
                 valid_mask = ~np.isnan(plot_line.data)
                 valid_indices = np.where(valid_mask)[0]
@@ -354,22 +512,73 @@ class ChartView(QWidget):
                     curve = pg.PlotDataItem(valid_indices, valid_data,
                                            pen=pg.mkPen(color=plot_line.color, width=plot_line.width + 1),
                                            name=plot_line.name)
+                    # Set visibility based on the overlay_line.visible flag
+                    curve.setVisible(overlay_line.visible)
                     self.plot_widget.addItem(curve)
                     self.indicator_curves.append(curve)
         
-        if len(self.overlay_lines) > 0:
-            self.plot_widget.addLegend()
+        # Update legend panel
+        self.update_legend_panel()
         
         start_idx = max(0, len(df) - self.visible_bars)
         self.plot_widget.setXRange(start_idx, len(df))
         self.update_date_ticks()
         self.update_info_position()
         
+        self.set_initial_y_range()
+        
         self.adjust_volume_height()
         
         for tl in self.trend_lines:
             if 'item' in tl:
                 self.plot_widget.addItem(tl['item'])
+    
+    def update_legend_panel(self):
+        # Clear old legend items
+        for item in self.legend_items:
+            item.clicked.disconnect()
+            self.legend_layout.removeWidget(item)
+            item.deleteLater()
+        self.legend_items.clear()
+        
+        # Add new legend items for overlay lines
+        for overlay_line in self.overlay_lines:
+            name = overlay_line.unique_name
+            color = overlay_line.plot_line.color
+            visible = overlay_line.visible
+            
+            legend_item = IndicatorLegendItem(name, visible, color)
+            legend_item.clicked.connect(lambda checked, n=name: self.toggle_indicator_visibility(n))
+            self.legend_layout.addWidget(legend_item)
+            self.legend_items.append(legend_item)
+        
+        # Hide legend panel if no indicators
+        self.legend_panel.setVisible(len(self.overlay_lines) > 0)
+    
+    def set_initial_y_range(self):
+        if self.df is None or len(self.df) == 0:
+            return
+        
+        start_idx = max(0, len(self.df) - self.visible_bars)
+        visible_df = self.df.iloc[start_idx:]
+        
+        if visible_df.empty:
+            return
+        
+        min_price = float(visible_df['Low'].min())
+        max_price = float(visible_df['High'].max())
+        price_range = max_price - min_price
+        
+        if price_range == 0:
+            price_range = max_price * 0.1 if max_price > 0 else 1.0
+            min_price -= price_range / 2
+            max_price += price_range / 2
+            price_range = max_price - min_price
+        
+        y_min = min_price - price_range * 0.05
+        y_max = max_price + price_range * 0.05
+        
+        self.plot_widget.setYRange(y_min, y_max, padding=0)
     
     def adjust_volume_height(self):
         if self.df is None or len(self.df) == 0 or 'Volume' not in self.df.columns:
@@ -379,6 +588,8 @@ class ChartView(QWidget):
             return
         
         view_range = self.view_box.viewRange()
+        y_min, y_max = view_range[1]
+        
         x_min, x_max = int(max(0, view_range[0][0])), int(min(len(self.df) - 1, view_range[0][1]))
         
         if x_min >= x_max:
@@ -390,16 +601,13 @@ class ChartView(QWidget):
         
         max_volume = float(visible_df['Volume'].max())
         min_price = float(visible_df['Low'].min())
-        max_price = float(visible_df['High'].max())
         
-        price_range = max_price - min_price
-        volume_scale = price_range * 0.2 / max_volume if max_volume > 0 else 0
+        price_range = y_max - y_min
+        volume_height_percentage = 0.25
+        volume_scale = (price_range * volume_height_percentage) / max_volume if max_volume > 0 else 0
         
         self.volume_item.setScale(volume_scale)
-        
-        min_visible_price = min_price - price_range * 0.05
-        max_visible_price = max_price + price_range * 0.05
-        self.plot_widget.setYRange(min_visible_price, max_visible_price)
+        self.volume_item.setYOffset(y_min - price_range * 0.05)
     
     def update_date_ticks(self):
         if self.df is None or len(self.df) == 0:
@@ -440,13 +648,39 @@ class ChartView(QWidget):
             padding = (y_max - y_min) * 0.02
             self.info_text.setPos(x_min + 2, y_max - padding)
     
-    def add_indicator_line(self, plot_line: PlotLine):
-        self.overlay_lines.append(plot_line)
+    def add_indicator_line(self, plot_line: PlotLine, visible=True, unique_name=None):
+        self.overlay_lines.append(OverlayLine(plot_line, visible, unique_name or plot_line.name))
         if self.df is not None:
             self.plot_candlesticks(self.df, self.symbol)
     
+    def toggle_indicator_visibility(self, unique_name: str):
+        """Toggle visibility of an indicator by its unique name"""
+        for overlay_line in self.overlay_lines:
+            if overlay_line.unique_name == unique_name:
+                overlay_line.visible = not overlay_line.visible
+                self.indicator_visibility_changed.emit(unique_name, overlay_line.visible)
+                self.plot_candlesticks(self.df, self.symbol)
+                break
+    
+    def set_indicator_visibility_from_panel(self, unique_name: str, visible: bool):
+        """Set visibility from external source (like edit dialog)"""
+        for overlay_line in self.overlay_lines:
+            if overlay_line.unique_name == unique_name:
+                overlay_line.visible = visible
+                if self.df is not None:
+                    self.plot_candlesticks(self.df, self.symbol)
+                break
+    
     def clear_indicators(self):
         self.overlay_lines.clear()
+        # Clear legend panel
+        for item in self.legend_items:
+            item.clicked.disconnect()
+            self.legend_layout.removeWidget(item)
+            item.deleteLater()
+        self.legend_items.clear()
+        self.legend_panel.setVisible(False)
+        
         if self.df is not None:
             self.plot_candlesticks(self.df, self.symbol)
     
@@ -465,19 +699,33 @@ class ChartView(QWidget):
         }
     
     def set_view_state(self, state):
-        if state:
+        if state and self.df is not None:
             x_range = state.get('x_range')
             y_range = state.get('y_range')
+            
             if x_range:
-                self.plot_widget.setXRange(x_range[0], x_range[1])
+                # Validate x_range is within data bounds
+                x_min, x_max = x_range
+                data_len = len(self.df)
+                
+                # Only restore if range is valid (within 10% of data length)
+                if x_min >= -data_len * 0.1 and x_max <= data_len * 1.1:
+                    self.plot_widget.setXRange(x_min, x_max)
+                else:
+                    # Range is invalid, use default view
+                    start_idx = max(0, data_len - self.visible_bars)
+                    self.plot_widget.setXRange(start_idx, data_len)
+            
             if y_range:
-                self.plot_widget.setYRange(y_range[0], y_range[1])
+                self.plot_widget.setYRange(y_range[0], y_range[1], padding=0)
 
 
 class CandlestickItem(pg.GraphicsObject):
-    def __init__(self, data):
+    def __init__(self, data, bull_color='#26a69a', bear_color='#ef5350'):
         pg.GraphicsObject.__init__(self)
         self.data = data
+        self.bull_color = bull_color
+        self.bear_color = bear_color
         self.picture = None
         self.generatePicture()
     
@@ -489,11 +737,12 @@ class CandlestickItem(pg.GraphicsObject):
         
         for i, (t, open_val, high, low, close) in enumerate(self.data):
             if close >= open_val:
-                pen = pg.mkPen('#26a69a', width=1)
-                brush = pg.mkBrush('#26a69a')
+                color = self.bull_color
             else:
-                pen = pg.mkPen('#ef5350', width=1)
-                brush = pg.mkBrush('#ef5350')
+                color = self.bear_color
+            
+            pen = pg.mkPen(color, width=1)
+            brush = pg.QtGui.QBrush(pg.QtGui.QColor(color), Qt.BrushStyle.SolidPattern)
             
             p.setPen(pen)
             p.setBrush(brush)
@@ -518,11 +767,17 @@ class VolumeItem(pg.GraphicsObject):
         pg.GraphicsObject.__init__(self)
         self.data = data
         self.scale = 1.0
+        self.y_offset = 0
         self.picture = None
         self.generatePicture()
     
     def setScale(self, scale):
         self.scale = scale
+        self.generatePicture()
+        self.update()
+    
+    def setYOffset(self, offset):
+        self.y_offset = offset
         self.generatePicture()
         self.update()
     
@@ -534,14 +789,13 @@ class VolumeItem(pg.GraphicsObject):
         
         for i, (t, vol, color) in enumerate(self.data):
             pen = pg.mkPen(color, width=1)
-            brush = pg.mkBrush(color)
+            brush = pg.QtGui.QBrush(pg.QtGui.QColor(color), Qt.BrushStyle.SolidPattern)
             
             p.setPen(pen)
             p.setBrush(brush)
             
             bar_height = vol * self.scale
-            y_offset = 0
-            p.drawRect(pg.QtCore.QRectF(t - bar_width/2, y_offset, bar_width, bar_height))
+            p.drawRect(pg.QtCore.QRectF(t - bar_width/2, self.y_offset, bar_width, bar_height))
         
         p.end()
     

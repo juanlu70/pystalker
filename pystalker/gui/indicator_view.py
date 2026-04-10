@@ -10,6 +10,11 @@ import numpy as np
 from ..core.indicators import Indicator
 
 
+class PriceAxisItem(pg.AxisItem):
+    def tickStrings(self, values, scale, spacing):
+        return [f'{v:.2f}' for v in values]
+
+
 class IndicatorPanel(QWidget):
     range_changed = pyqtSignal(float, float, object)
     
@@ -29,6 +34,8 @@ class IndicatorPanel(QWidget):
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('#1e1e1e')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.showAxis('right')
+        self.plot_widget.hideAxis('left')
         self.plot_widget.setTitle(indicator.name, color='w', size='10pt')
         
         self.view_box = self.plot_widget.plotItem.vb
@@ -49,6 +56,14 @@ class IndicatorPanel(QWidget):
     def plot_indicator(self):
         self.plot_widget.clear()
         self.curves.clear()
+        
+        left_axis = self.plot_widget.getAxis('left')
+        left_axis.setStyle(showValues=False)
+        
+        price_axis = PriceAxisItem(orientation='right')
+        price_axis.setStyle(showValues=True)
+        price_axis.setZValue(1000)
+        self.plot_widget.setAxisItems({'right': price_axis})
         
         for line in self.indicator.lines:
             if len(line.data) == len(self.data):

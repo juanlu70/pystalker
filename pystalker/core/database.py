@@ -26,21 +26,6 @@ class Database:
         cursor = self.conn.cursor()
         
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bars (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                open REAL NOT NULL,
-                high REAL NOT NULL,
-                low REAL NOT NULL,
-                close REAL NOT NULL,
-                volume REAL,
-                interval TEXT DEFAULT '1d',
-                UNIQUE(symbol, timestamp, interval)
-            )
-        ''')
-        
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS symbols (
                 symbol TEXT PRIMARY KEY,
                 last_updated INTEGER,
@@ -55,77 +40,171 @@ class Database:
             )
         ''')
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chart_indicators (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                indicator_name TEXT NOT NULL,
-                indicator_type TEXT NOT NULL,
-                params TEXT,
-                color TEXT,
-                view_state TEXT,
-                UNIQUE(symbol, indicator_name)
+        self.conn.commit()
+        
+        self._migrate_old_schema()
+    
+    def _migrate_old_schema(self):
+        cursor = self.conn.cursor()
+        
+        # Check if old 'bars' table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bars'")
+        if cursor.fetchone():
+            cursor.execute("SELECT DISTINCT symbol FROM bars")
+            old_symbols = [row[0] for row in cursor.fetchall()]
+            
+            for symbol in old_symbols:
+                self._ensure_symbol_tables(symbol)
+                
+                bars_table = f'"{symbol}_bars"'
+                settings_table = f'"{symbol}_settings"'
+                
+                # Migrate bars
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {bars_table} (timestamp, open, high, low, close, volume)
+                    SELECT timestamp, open, high, low, close, volume
+                    FROM bars WHERE symbol = ?
+                ''', (symbol,))
+                
+                # Check for old indicators
+                cursor.execute('''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name='chart_indicators'
+                ''')
+                if cursor.fetchone():
+                    import json
+                    cursor.execute('''
+                        SELECT indicator_name, indicator_type, params, color, view_state
+                        FROM chart_indicators WHERE symbol = ?
+                    ''', (symbol,))
+                    indicators = []
+                    for row in cursor.fetchall():
+                        indicators.append({
+                            'name': row[0],
+                            'indicator_name': row[0],
+                            'type': row[1],
+                            'params': json.loads(row[2]) if row[2] else {},
+                            'color': row[3] if row[3] else '#00BFFF',
+                            'view_state': json.loads(row[4]) if row[4] else {}
+                        })
+                    if indicators:
+                        cursor.execute(f'''
+                            INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)
+                        ''', ('indicators', json.dumps(indicators)))
+                
+                # Check for old view state
+                cursor.execute('''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name='chart_view_state'
+                ''')
+                if cursor.fetchone():
+                    cursor.execute('''
+                        SELECT x_range_min, x_range_max, y_range_min, y_range_max
+                        FROM chart_view_state WHERE symbol = ?
+                    ''', (symbol,))
+                    row = cursor.fetchone()
+                    if row:
+                        import json
+                        view_state = {
+                            'x_min': row[0],
+                            'x_max': row[1],
+                            'y_min': row[2],
+                            'y_max': row[3]
+                        }
+                        cursor.execute(f'''
+                            INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)
+                        ''', ('view_state', json.dumps(view_state)))
+                
+                # Check for old colors
+                cursor.execute('''
+                    SELECT name FROM sqlite_master WHERE type='table' AND name='chart_colors'
+                ''')
+                if cursor.fetchone():
+                    cursor.execute('''
+                        SELECT bull_color, bear_color FROM chart_colors WHERE symbol = ?
+                    ''', (symbol,))
+                    row = cursor.fetchone()
+                    if row:
+                        cursor.execute(f'''
+                            INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)
+                        ''', ('bull_color', row[0]))
+                        cursor.execute(f'''
+                            INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)
+                        ''', ('bear_color', row[1]))
+            
+            # Drop old tables
+            cursor.execute('DROP TABLE IF EXISTS bars')
+            cursor.execute('DROP TABLE IF EXISTS chart_indicators')
+            cursor.execute('DROP TABLE IF EXISTS chart_view_state')
+            cursor.execute('DROP TABLE IF EXISTS chart_colors')
+            
+            self.conn.commit()
+            print(f"Migrated {len(old_symbols)} symbols to new schema")
+    
+    def _ensure_symbol_tables(self, symbol: str):
+        cursor = self.conn.cursor()
+        
+        bars_table = f'"{symbol}_bars"'
+        cursor.execute(f'''
+            CREATE TABLE IF NOT EXISTS {bars_table} (
+                timestamp INTEGER PRIMARY KEY,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL
             )
         ''')
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chart_view_state (
-                symbol TEXT PRIMARY KEY,
-                x_range_min REAL,
-                x_range_max REAL,
-                y_range_min REAL,
-                y_range_max REAL
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f'''
+            CREATE TABLE IF NOT EXISTS {settings_table} (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_bars_symbol ON bars(symbol)
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_bars_timestamp ON bars(timestamp)
         ''')
         
         self.conn.commit()
     
     def save_bars(self, bar_data: BarData, interval: str = '1d'):
+        symbol = bar_data.symbol
+        self._ensure_symbol_tables(symbol)
+        
         cursor = self.conn.cursor()
         
-        cursor.execute('DELETE FROM bars WHERE symbol = ? AND interval = ?', 
-                      (bar_data.symbol, interval))
+        bars_table = f'"{symbol}_bars"'
+        cursor.execute(f'DELETE FROM {bars_table}')
         
         for bar in bar_data.bars:
-            cursor.execute('''
-                INSERT OR REPLACE INTO bars 
-                (symbol, timestamp, open, high, low, close, volume, interval)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            cursor.execute(f'''
+                INSERT OR REPLACE INTO {bars_table}
+                (timestamp, open, high, low, close, volume)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
-                bar_data.symbol,
                 int(bar.date.timestamp()),
                 bar.open,
                 bar.high,
                 bar.low,
                 bar.close,
-                bar.volume,
-                interval
+                bar.volume
             ))
         
         cursor.execute('''
             INSERT OR REPLACE INTO symbols (symbol, last_updated, interval)
             VALUES (?, ?, ?)
-        ''', (bar_data.symbol, int(datetime.now().timestamp()), interval))
+        ''', (symbol, int(datetime.now().timestamp()), interval))
         
         self.conn.commit()
     
     def load_bars(self, symbol: str, interval: str = '1d') -> Optional[BarData]:
+        self._ensure_symbol_tables(symbol)
+        
         cursor = self.conn.cursor()
         
-        cursor.execute('''
+        bars_table = f'"{symbol}_bars"'
+        cursor.execute(f'''
             SELECT timestamp, open, high, low, close, volume
-            FROM bars
-            WHERE symbol = ? AND interval = ?
+            FROM {bars_table}
             ORDER BY timestamp ASC
-        ''', (symbol, interval))
+        ''')
         
         rows = cursor.fetchall()
         
@@ -154,8 +233,14 @@ class Database:
     
     def delete_symbol(self, symbol: str):
         cursor = self.conn.cursor()
-        cursor.execute('DELETE FROM bars WHERE symbol = ?', (symbol,))
+        
+        bars_table = f'"{symbol}_bars"'
+        settings_table = f'"{symbol}_settings"'
+        
+        cursor.execute(f'DROP TABLE IF EXISTS {bars_table}')
+        cursor.execute(f'DROP TABLE IF EXISTS {settings_table}')
         cursor.execute('DELETE FROM symbols WHERE symbol = ?', (symbol,))
+        
         self.conn.commit()
     
     def save_session(self, open_tabs: List[str], current_tab: str = None):
@@ -186,63 +271,103 @@ class Database:
         
         return open_tabs, current_tab
     
-    def save_chart_indicators(self, symbol: str, indicators: list):
+    def save_chart_colors(self, symbol: str, bull_color: str, bear_color: str):
+        self._ensure_symbol_tables(symbol)
         cursor = self.conn.cursor()
-        cursor.execute('DELETE FROM chart_indicators WHERE symbol = ?', (symbol,))
         
-        for ind in indicators:
-            import json
-            cursor.execute('''
-                INSERT INTO chart_indicators (symbol, indicator_name, indicator_type, params, color, view_state)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (symbol, ind['name'], ind['type'], json.dumps(ind.get('params', {})), 
-                  ind.get('color', '#00BFFF'), json.dumps(ind.get('view_state', {}))))
+        settings_table = f'"{symbol}_settings"'
+        import json
+        
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('bull_color', bull_color))
+        
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('bear_color', bear_color))
+        
+        self.conn.commit()
+    
+    def load_chart_colors(self, symbol: str) -> dict:
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        
+        settings_table = f'"{symbol}_settings"'
+        
+        result = {}
+        
+        cursor.execute(f'SELECT value FROM {settings_table} WHERE key = ?', ('bull_color',))
+        row = cursor.fetchone()
+        if row:
+            result['bull_color'] = row[0]
+        
+        cursor.execute(f'SELECT value FROM {settings_table} WHERE key = ?', ('bear_color',))
+        row = cursor.fetchone()
+        if row:
+            result['bear_color'] = row[0]
+        
+        return result
+    
+    def save_chart_indicators(self, symbol: str, indicators: list):
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        
+        settings_table = f'"{symbol}_settings"'
+        import json
+        
+        indicators_json = json.dumps(indicators)
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('indicators', indicators_json))
         
         self.conn.commit()
     
     def load_chart_indicators(self, symbol: str) -> list:
+        self._ensure_symbol_tables(symbol)
         cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT indicator_name, indicator_type, params, color, view_state
-            FROM chart_indicators WHERE symbol = ?
-        ''', (symbol,))
         
-        import json
-        indicators = []
-        for row in cursor.fetchall():
-            indicators.append({
-                'name': row[0],
-                'type': row[1],
-                'params': json.loads(row[2]) if row[2] else {},
-                'color': row[3] if row[3] else '#00BFFF',
-                'view_state': json.loads(row[4]) if row[4] else {}
-            })
-        return indicators
+        settings_table = f'"{symbol}_settings"'
+        
+        cursor.execute(f'SELECT value FROM {settings_table} WHERE key = ?', ('indicators',))
+        row = cursor.fetchone()
+        
+        if row:
+            import json
+            return json.loads(row[0])
+        
+        return []
     
     def save_chart_view_state(self, symbol: str, view_state: dict):
+        self._ensure_symbol_tables(symbol)
         cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO chart_view_state (symbol, x_range_min, x_range_max, y_range_min, y_range_max)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (symbol, view_state.get('x_min'), view_state.get('x_max'),
-              view_state.get('y_min'), view_state.get('y_max')))
+        
+        settings_table = f'"{symbol}_settings"'
+        import json
+        
+        view_state_json = json.dumps(view_state)
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('view_state', view_state_json))
+        
         self.conn.commit()
     
     def load_chart_view_state(self, symbol: str) -> dict:
+        self._ensure_symbol_tables(symbol)
         cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT x_range_min, x_range_max, y_range_min, y_range_max
-            FROM chart_view_state WHERE symbol = ?
-        ''', (symbol,))
         
+        settings_table = f'"{symbol}_settings"'
+        
+        cursor.execute(f'SELECT value FROM {settings_table} WHERE key = ?', ('view_state',))
         row = cursor.fetchone()
+        
         if row:
-            return {
-                'x_min': row[0],
-                'x_max': row[1],
-                'y_min': row[2],
-                'y_max': row[3]
-            }
+            import json
+            return json.loads(row[0])
+        
         return {}
     
     def close(self):
