@@ -18,7 +18,7 @@ This project is done with a wish of recover that project and make it open source
 
 I only have a very basic knowledge of C++ and LibQT, I am mainly a python developer, so with AI and agentic development I tried to recover this project:
 
-1.- I tried to compile Qtatalker inside a very old Debian distribution in docker, get the binary in my current and modern Ubuntu system, and copied all the old LibQT3 libraries in my system, good but not satisfactory.
+1.- I tried to compile Qtstalker inside a very old Debian distribution in docker, get the binary in my current and modern Ubuntu system, and copied all the old LibQT3 libraries in my system, good but not satisfactory.
 2.- I tried to port the original Qtstalker program from LibQT3 to LibQT5 using OpenCode, Ollama and GLM-5 model, got some results but not satisfactory at all.
 3.- Then I tried to program a C++ LibQT5/6 port from scratch telling AI to make the same program as the qtstalker original code, still not satisfactory.
 4.- My final try was to make a python program with PyQT to emulate the same behaviour of the original program, and providing the AI agent with the original code, it seems that this time the result was good.
