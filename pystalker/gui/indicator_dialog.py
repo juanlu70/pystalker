@@ -21,7 +21,7 @@ class IndicatorDialog(QDialog):
         
         self.param_widgets = {}
         self.current_indicator = None
-        self.selected_color = '#00BFFF'
+        self.line_colors = {}
         self.existing_indicators = existing_indicators or []
         
         self.init_ui()
@@ -58,23 +58,12 @@ class IndicatorDialog(QDialog):
         
         self.params_group.setVisible(False)
         
-        color_group = QGroupBox("Line Color")
-        color_layout = QHBoxLayout()
+        self.colors_group = QGroupBox("Line Colors")
+        self.colors_layout = QFormLayout()
+        self.colors_group.setLayout(self.colors_layout)
+        layout.addWidget(self.colors_group)
         
-        self.color_label = QLabel()
-        self.color_label.setFixedSize(60, 30)
-        self.color_label.setStyleSheet(f"background-color: {self.selected_color}; border: 1px solid white;")
-        self.color_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.color_label.mousePressEvent = lambda e: self.choose_color()
-        color_layout.addWidget(self.color_label)
-        
-        self.color_btn = QPushButton("Choose Color")
-        self.color_btn.clicked.connect(self.choose_color)
-        color_layout.addWidget(self.color_btn)
-        color_layout.addStretch()
-        
-        color_group.setLayout(color_layout)
-        layout.addWidget(color_group)
+        self.colors_group.setVisible(False)
         
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -85,25 +74,40 @@ class IndicatorDialog(QDialog):
         
         self.on_indicator_changed(self.type_combo.currentText())
     
-    def choose_color(self):
-        color = QColorDialog.getColor(QColor(self.selected_color), self, "Select Indicator Color")
+    def choose_line_color(self, line_name):
+        current_color = self.line_colors.get(line_name, '#00BFFF')
+        color = QColorDialog.getColor(QColor(current_color), self, f"Select Color for {line_name}")
         if color.isValid():
-            self.selected_color = color.name()
-            self.color_label.setStyleSheet(f"background-color: {self.selected_color}; border: 1px solid white;")
+            self.line_colors[line_name] = color.name()
+            self._update_color_labels()
+    
+    def _update_color_labels(self):
+        for line_name, label in self._color_labels.items():
+            c = self.line_colors.get(line_name, '#00BFFF')
+            label.setStyleSheet(f"background-color: {c}; border: 1px solid white;")
+    
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
     
     def on_indicator_changed(self, indicator_name):
         if indicator_name.startswith("--"):
             self.params_group.setVisible(False)
+            self.colors_group.setVisible(False)
             return
         
         self.current_indicator = indicator_name
         
-        for i in reversed(range(self.params_layout.count())):
-            widget = self.params_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+        self._clear_layout(self.params_layout)
+        self._clear_layout(self.colors_layout)
         
         self.param_widgets.clear()
+        self.line_colors.clear()
+        self._color_labels = {}
         
         all_indicators = IndicatorManager.ALL_INDICATORS
         if indicator_name not in all_indicators:
@@ -112,27 +116,9 @@ class IndicatorDialog(QDialog):
         params = all_indicators[indicator_name]['params']
         self.params_group.setVisible(True)
         
-        default_colors = {
-            'SMA': '#00BFFF',
-            'EMA': '#FFD700',
-            'BBANDS': '#FF6B6B',
-            'SAR': '#00CED1',
-            'MACD': '#4169E1',
-            'RSI': '#9370DB',
-            'CCI': '#FFD700',
-            'ADX': '#DA70D6',
-            'ATR': '#00CED1',
-            'MOM': '#FF8C00',
-            'ROC': '#FFD700',
-            'STOCH': '#4169E1',
-            'STOCHRSI': '#4169E1',
-            'WILLR': '#FFD700',
-            'OBV': '#00CED1',
-            'MFI': '#9370DB'
-        }
-        
-        self.selected_color = default_colors.get(indicator_name, '#00BFFF')
-        self.color_label.setStyleSheet(f"background-color: {self.selected_color}; border: 1px solid white;")
+        line_defaults = IndicatorManager.LINE_DEFAULTS.get(indicator_name, [])
+        for line_def in line_defaults:
+            self.line_colors[line_def['name']] = line_def['color']
         
         for param_name, default_value in params.items():
             label = QLabel(f"{param_name}:")
@@ -156,6 +142,29 @@ class IndicatorDialog(QDialog):
             self.param_widgets[param_name] = spinbox
             self.params_layout.addRow(label, spinbox)
         
+        if len(line_defaults) > 1:
+            self.colors_group.setVisible(True)
+            for line_def in line_defaults:
+                line_name = line_def['name']
+                color_label = QLabel()
+                color_label.setFixedSize(60, 25)
+                color_label.setStyleSheet(f"background-color: {self.line_colors[line_name]}; border: 1px solid white;")
+                color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+                color_label.mousePressEvent = lambda e, n=line_name: self.choose_line_color(n)
+                self._color_labels[line_name] = color_label
+                
+                btn = QPushButton(f"Choose {line_name} Color")
+                btn.clicked.connect(lambda checked, n=line_name: self.choose_line_color(n))
+                
+                row_layout = QHBoxLayout()
+                row_layout.addWidget(color_label)
+                row_layout.addWidget(btn)
+                row_layout.addStretch()
+                self.colors_layout.addRow(f"{line_name}:", row_layout)
+        else:
+            self.colors_group.setVisible(False)
+            self.line_colors.clear()
+        
         self.params_group.setVisible(True)
     
     def get_indicator_name(self):
@@ -174,7 +183,13 @@ class IndicatorDialog(QDialog):
         return params
     
     def get_indicator_color(self):
-        return self.selected_color
+        if self.line_colors:
+            first_color = list(self.line_colors.values())[0]
+            return first_color
+        return '#00BFFF'
+    
+    def get_indicator_colors(self):
+        return dict(self.line_colors)
 
 
 class EditIndicatorsDialog(QDialog):
@@ -236,28 +251,34 @@ class EditIndicatorsDialog(QDialog):
         all_indicators = IndicatorManager.ALL_INDICATORS
         
         dialog = IndicatorDialog(self)
-        # Use the base indicator name for the combo
         indicator_name = ind.get('indicator_name', ind.get('name', 'Unknown'))
         dialog.type_combo.setCurrentText(indicator_name)
         dialog.on_indicator_changed(indicator_name)
         
-        if ind.get('color'):
-            dialog.selected_color = ind['color']
-            dialog.color_label.setStyleSheet(f"background-color: {ind['color']}; border: 1px solid white;")
+        if ind.get('colors'):
+            dialog.line_colors = dict(ind['colors'])
+            dialog._update_color_labels()
+        elif ind.get('color'):
+            line_defaults = IndicatorManager.LINE_DEFAULTS.get(indicator_name, [])
+            if len(line_defaults) <= 1:
+                dialog.line_colors = {}
+            else:
+                dialog.line_colors = {ld['name']: ind['color'] for ld in line_defaults}
+            dialog._update_color_labels()
         
         for param_name, value in ind.get('params', {}).items():
             if param_name in dialog.param_widgets:
                 dialog.param_widgets[param_name].setValue(value)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Preserve all fields from original indicator
             self.indicators[current_row] = {
                 'name': ind.get('name', dialog.get_indicator_name()),
                 'indicator_name': dialog.get_indicator_name(),
                 'type': IndicatorManager.ALL_INDICATORS.get(dialog.get_indicator_name(), {}).get('type', 'overlay'),
                 'params': dialog.get_indicator_params(),
                 'color': dialog.get_indicator_color(),
-                'visible': ind.get('visible', True)  # Preserve visibility state
+                'colors': dialog.get_indicator_colors(),
+                'visible': ind.get('visible', True)
             }
             self.refresh_list()
     
@@ -280,9 +301,13 @@ class EditIndicatorsDialog(QDialog):
         self.indicator_list.clear()
         for ind in self.indicators:
             visible_icon = "👁" if ind.get('visible', True) else "🚫"
-            color_box = f" [{ind.get('color', '#FFFFFF')}]"
             display_name = ind.get('name', ind.get('indicator_name', 'Unknown'))
-            self.indicator_list.addItem(f"{visible_icon} {display_name}{color_box} - {ind.get('params', {})}")
+            colors = ind.get('colors', {})
+            if colors:
+                color_str = ', '.join(f"{k}: {v}" for k, v in colors.items())
+            else:
+                color_str = ind.get('color', '#FFFFFF')
+            self.indicator_list.addItem(f"{visible_icon} {display_name} [{color_str}] - {ind.get('params', {})}")
     
     def accept_changes(self):
         self.result_data = self.indicators

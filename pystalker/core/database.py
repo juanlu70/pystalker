@@ -40,6 +40,13 @@ class Database:
             )
         ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        
         self.conn.commit()
         
         self._migrate_old_schema()
@@ -369,6 +376,36 @@ class Database:
             return json.loads(row[0])
         
         return {}
+    
+    def save_setting(self, key: str, value: str):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
+        ''', (key, value))
+        self.conn.commit()
+    
+    def load_setting(self, key: str) -> Optional[str]:
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    
+    def save_settings(self, settings: dict):
+        cursor = self.conn.cursor()
+        for key, value in settings.items():
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
+            ''', (key, value))
+        self.conn.commit()
+    
+    def load_settings(self, keys: list = None) -> dict:
+        cursor = self.conn.cursor()
+        if keys:
+            placeholders = ','.join(['?'] * len(keys))
+            cursor.execute(f'SELECT key, value FROM settings WHERE key IN ({placeholders})', keys)
+        else:
+            cursor.execute('SELECT key, value FROM settings')
+        return {row[0]: row[1] for row in cursor.fetchall()}
     
     def close(self):
         if self.conn:

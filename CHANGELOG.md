@@ -12,4 +12,10 @@
 2026-04-11
 
 - Added new legend of OHLC values when mouse is over candles, including graph indicators.
+- Modified the loading order of assets, priorizing the last opened graph, and make the rest open in background.
+- Changed icons to zoom in/out, added a new Reset Graph button.
+- Restored indicator legends in the main graph.
+- Added individual colors for each parameter of the indicator.
+
+
 

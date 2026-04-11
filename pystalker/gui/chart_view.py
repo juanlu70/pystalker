@@ -197,6 +197,8 @@ class ChartView(QWidget):
             self.start_trendline_drawing()
         elif event.key() == Qt.Key.Key_Escape:
             self.cancel_trendline()
+        elif event.key() == Qt.Key.Key_Y:
+            self.show_last_year()
         elif event.key() == Qt.Key.Key_O:
             self.snap_mode = 'open'
             self.info_text.setText("Snap mode: Open")
@@ -436,6 +438,16 @@ class ChartView(QWidget):
             self.plot_widget.setXRange(start_idx, len(self.df))
             self.plot_widget.autoRange()
     
+    def show_last_year(self):
+        if self.df is not None and len(self.df) > 0:
+            freq = pd.infer_freq(self.df.index) if len(self.df) > 2 else None
+            if freq and freq.startswith(('B', 'D')):
+                bars_per_year = 252
+            else:
+                bars_per_year = 365
+            start_idx = max(0, len(self.df) - bars_per_year)
+            self.plot_widget.setXRange(start_idx, len(self.df))
+    
     def plot_candlesticks(self, df: pd.DataFrame, symbol: str):
         self.df = df
         self.symbol = symbol
@@ -467,6 +479,9 @@ class ChartView(QWidget):
         self.update_ohlc_legend()
         
         self.plot_widget.setTitle(symbol, color='w', size='14pt')
+        
+        if len(self.overlay_lines) > 0:
+            self.plot_widget.addLegend(offset=(10, 30))
         
         candle_data = []
         for i in range(len(df)):
@@ -505,14 +520,9 @@ class ChartView(QWidget):
                     curve = pg.PlotDataItem(valid_indices, valid_data,
                                            pen=pg.mkPen(color=plot_line.color, width=plot_line.width + 1),
                                            name=plot_line.name)
-                    # Set visibility based on the overlay_line.visible flag
                     curve.setVisible(overlay_line.visible)
                     self.plot_widget.addItem(curve)
                     self.indicator_curves.append(curve)
-        
-        # Show legend if there are overlay lines
-        if len(self.overlay_lines) > 0:
-            self.plot_widget.addLegend()
         
         start_idx = max(0, len(df) - self.visible_bars)
         self.plot_widget.setXRange(start_idx, len(df))

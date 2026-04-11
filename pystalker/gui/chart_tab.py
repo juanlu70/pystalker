@@ -115,11 +115,7 @@ class ChartTab(QWidget):
             self.splitter.setSizes([chart_height, indicator_height])
     
     def on_colors_changed(self):
-        if hasattr(self, 'symbol') and self.symbol:
-            from ..core.database import Database
-            db = Database()
-            db.save_chart_colors(self.symbol, self.chart_view.bull_color, self.chart_view.bear_color)
-            db.close()
+        pass
     
     def on_indicator_visibility_changed(self, unique_name: str, visible: bool):
         """Called when visibility is toggled from the chart legend"""
@@ -159,6 +155,7 @@ class ChartTab(QWidget):
 class ChartTabWidget(QTabWidget):
     chart_closed = pyqtSignal(str)
     current_changed = pyqtSignal(int)
+    colors_changed_global = pyqtSignal(str, str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -167,17 +164,29 @@ class ChartTabWidget(QTabWidget):
         self.currentChanged.connect(self.on_current_changed)
         self.tabs = {}
     
-    def add_chart_tab(self, symbol: str, interval: str = '1d') -> ChartTab:
+    def on_current_changed(self, index):
+        if index >= 0:
+            tab = self.widget(index)
+            if tab and not tab.isVisible():
+                tab.show()
+        self.current_changed.emit(index)
+    
+    def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True) -> ChartTab:
         if symbol in self.tabs:
             tab = self.tabs[symbol]
-            index = self.indexOf(tab)
-            self.setCurrentIndex(index)
+            index = indexOf(tab)
+            if set_current:
+                self.setCurrentIndex(index)
             return tab
         
         tab = ChartTab()
+        tab.chart_view.colors_changed.connect(
+            lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color)
+        )
         self.tabs[symbol] = tab
         index = self.addTab(tab, symbol)
-        self.setCurrentIndex(index)
+        if set_current:
+            self.setCurrentIndex(index)
         return tab
     
     def get_current_tab(self) -> ChartTab:
