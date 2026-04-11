@@ -65,6 +65,39 @@ class IndicatorManager:
     
     ALL_INDICATORS = {**OVERLAY_INDICATORS, **SEPARATE_INDICATORS}
     
+    LINE_DEFAULTS = {
+        'SMA': [{'name': 'SMA', 'color': '#00BFFF'}],
+        'EMA': [{'name': 'EMA', 'color': '#FFD700'}],
+        'BBANDS': [
+            {'name': 'Upper', 'color': '#FF6B6B'},
+            {'name': 'Middle', 'color': '#4ECDC4'},
+            {'name': 'Lower', 'color': '#95E1D3'},
+        ],
+        'SAR': [{'name': 'SAR', 'color': '#00CED1'}],
+        'MACD': [
+            {'name': 'MACD', 'color': '#4169E1'},
+            {'name': 'Signal', 'color': '#FF8C00'},
+            {'name': 'Histogram', 'color': '#32CD32'},
+        ],
+        'RSI': [{'name': 'RSI', 'color': '#9370DB'}],
+        'CCI': [{'name': 'CCI', 'color': '#FFD700'}],
+        'ADX': [{'name': 'ADX', 'color': '#DA70D6'}],
+        'ATR': [{'name': 'ATR', 'color': '#00CED1'}],
+        'MOM': [{'name': 'MOM', 'color': '#FF8C00'}],
+        'ROC': [{'name': 'ROC', 'color': '#FFD700'}],
+        'STOCH': [
+            {'name': '%K', 'color': '#4169E1'},
+            {'name': '%D', 'color': '#FF6347'},
+        ],
+        'STOCHRSI': [
+            {'name': 'FastK', 'color': '#4169E1'},
+            {'name': 'FastD', 'color': '#FF6347'},
+        ],
+        'WILLR': [{'name': 'WILLR', 'color': '#FFD700'}],
+        'OBV': [{'name': 'OBV', 'color': '#00CED1'}],
+        'MFI': [{'name': 'MFI', 'color': '#9370DB'}],
+    }
+    
     def __init__(self):
         self.indicators: Dict[str, Indicator] = {}
     
@@ -81,7 +114,7 @@ class IndicatorManager:
         return IndicatorManager.SEPARATE_INDICATORS
     
     @staticmethod
-    def calculate_indicator(name: str, data: pd.DataFrame, params: Dict = None) -> Optional[Indicator]:
+    def calculate_indicator(name: str, data: pd.DataFrame, params: Dict = None, colors: Dict = None) -> Optional[Indicator]:
         if name not in IndicatorManager.ALL_INDICATORS:
             return None
         
@@ -109,70 +142,71 @@ class IndicatorManager:
             return None
         
         try:
+            line_colors = colors or {}
             if name == 'SMA':
                 result = func(close, timeperiod=default_params['period'])
-                line = PlotLine(f'SMA({default_params["period"]})', result, '#00BFFF')
+                line = PlotLine(f'SMA({default_params["period"]})', result, line_colors.get('SMA', '#00BFFF'))
                 indicator.add_line(line)
             elif name == 'EMA':
                 result = func(close, timeperiod=default_params['period'])
-                line = PlotLine(f'EMA({default_params["period"]})', result, '#FFD700')
+                line = PlotLine(f'EMA({default_params["period"]})', result, line_colors.get('EMA', '#FFD700'))
                 indicator.add_line(line)
             elif name == 'BBANDS':
                 upper, middle, lower = func(close, timeperiod=default_params['period'],
                                             nbdevup=default_params['nbdevup'], nbdevdn=default_params['nbdevdn'])
-                indicator.add_line(PlotLine('Upper', upper, '#FF6B6B'))
-                indicator.add_line(PlotLine('Middle', middle, '#4ECDC4'))
-                indicator.add_line(PlotLine('Lower', lower, '#95E1D3'))
+                indicator.add_line(PlotLine('Upper', upper, line_colors.get('Upper', '#FF6B6B')))
+                indicator.add_line(PlotLine('Middle', middle, line_colors.get('Middle', '#4ECDC4')))
+                indicator.add_line(PlotLine('Lower', lower, line_colors.get('Lower', '#95E1D3')))
             elif name == 'SAR':
                 result = func(high, low, acceleration=default_params['acceleration'], maximum=default_params['maximum'])
-                indicator.add_line(PlotLine('SAR', result, '#00CED1'))
+                indicator.add_line(PlotLine('SAR', result, line_colors.get('SAR', '#00CED1')))
             elif name == 'MACD':
                 macd, signal, hist = func(close, fastperiod=default_params['fastperiod'],
                                          slowperiod=default_params['slowperiod'],
                                          signalperiod=default_params['signalperiod'])
-                indicator.add_line(PlotLine('MACD', macd, '#4169E1'))
-                indicator.add_line(PlotLine('Signal', signal, '#FF8C00'))
-                indicator.add_line(PlotLine('Histogram', hist, '#32CD32'))
+                indicator.add_line(PlotLine('MACD', macd, line_colors.get('MACD', '#4169E1')))
+                indicator.add_line(PlotLine('Signal', signal, line_colors.get('Signal', '#FF8C00')))
+                indicator.add_line(PlotLine('Histogram', hist, line_colors.get('Histogram', '#32CD32')))
             elif name == 'RSI':
                 result = func(close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'RSI({default_params["period"]})', result, '#9370DB'))
+                indicator.add_line(PlotLine(f'RSI({default_params["period"]})', result, line_colors.get('RSI', '#9370DB')))
             elif name == 'CCI':
                 result = func(high, low, close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'CCI({default_params["period"]})', result, '#FFD700'))
+                indicator.add_line(PlotLine(f'CCI({default_params["period"]})', result, line_colors.get('CCI', '#FFD700')))
             elif name == 'ADX':
                 result = func(high, low, close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'ADX({default_params["period"]})', result, '#DA70D6'))
+                indicator.add_line(PlotLine(f'ADX({default_params["period"]})', result, line_colors.get('ADX', '#DA70D6')))
             elif name == 'ATR':
                 result = func(high, low, close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'ATR({default_params["period"]})', result, '#00CED1'))
+                indicator.add_line(PlotLine(f'ATR({default_params["period"]})', result, line_colors.get('ATR', '#00CED1')))
             elif name == 'MOM':
                 result = func(close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'MOM({default_params["period"]})', result, '#FF8C00'))
+                indicator.add_line(PlotLine(f'MOM({default_params["period"]})', result, line_colors.get('MOM', '#FF8C00')))
             elif name == 'ROC':
                 result = func(close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'ROC({default_params["period"]})', result, '#FFD700'))
+                indicator.add_line(PlotLine(f'ROC({default_params["period"]})', result, line_colors.get('ROC', '#FFD700')))
             elif name == 'STOCH':
                 slowk, slowd = func(high, low, close,
                                    fastk_period=default_params['fastk_period'],
                                    slowk_period=default_params['slowk_period'],
                                    slowd_period=default_params['slowd_period'])
-                indicator.add_line(PlotLine('%K', slowk, '#4169E1'))
-                indicator.add_line(PlotLine('%D', slowd, '#FF6347'))
+                indicator.add_line(PlotLine('%K', slowk, line_colors.get('%K', '#4169E1')))
+                indicator.add_line(PlotLine('%D', slowd, line_colors.get('%D', '#FF6347')))
             elif name == 'STOCHRSI':
                 fastk, fastd = func(close, timeperiod=default_params['period'],
                                    fastk_period=default_params['fastk_period'],
                                    fastd_period=default_params['fastd_period'])
-                indicator.add_line(PlotLine('FastK', fastk, '#4169E1'))
-                indicator.add_line(PlotLine('FastD', fastd, '#FF6347'))
+                indicator.add_line(PlotLine('FastK', fastk, line_colors.get('FastK', '#4169E1')))
+                indicator.add_line(PlotLine('FastD', fastd, line_colors.get('FastD', '#FF6347')))
             elif name == 'WILLR':
                 result = func(high, low, close, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'WILLR({default_params["period"]})', result, '#FFD700'))
+                indicator.add_line(PlotLine(f'WILLR({default_params["period"]})', result, line_colors.get('WILLR', '#FFD700')))
             elif name == 'OBV':
                 result = func(close, volume)
-                indicator.add_line(PlotLine('OBV', result, '#00CED1'))
+                indicator.add_line(PlotLine('OBV', result, line_colors.get('OBV', '#00CED1')))
             elif name == 'MFI':
                 result = func(high, low, close, volume, timeperiod=default_params['period'])
-                indicator.add_line(PlotLine(f'MFI({default_params["period"]})', result, '#9370DB'))
+                indicator.add_line(PlotLine(f'MFI({default_params["period"]})', result, line_colors.get('MFI', '#9370DB')))
             
             return indicator
         except Exception as e:
