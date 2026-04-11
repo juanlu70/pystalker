@@ -9,4 +9,7 @@
 - Fixed first presentation of the graph, was showing the most far date in the past, now show the data of current days.
 - Fixed the context menu for changing colors of the candles is showing after changing the color.
 
+2026-04-11
+
+- Added new legend of OHLC values when mouse is over candles, including graph indicators.
 

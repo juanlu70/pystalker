@@ -157,45 +157,18 @@ class ChartView(QWidget):
         self.plot_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self.show_context_menu)
         
-        self.plot_widget.plotItem.legend = None
-        self.legend_items = []
-        
-        self.view_box = self.plot_widget.plotItem.vb
-        
         self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
         self.view_box.sigYRangeChanged.connect(self.update_info_position)
         self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
         self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
+        self.view_box.sigXRangeChanged.connect(self.update_ohlc_legend_position)
         
         self.volume_view_box = pg.ViewBox()
         self.volume_view_box.setYRange(0, 1, padding=0)
         self.plot_widget.scene().addItem(self.volume_view_box)
-        
-        self.volume_view_box.setYRange(0, 1, padding=0)
-        self.plot_widget.scene().addItem(self.volume_view_box)
-        
         self.plot_widget.plotItem.vb.setXLink(self.volume_view_box)
         
-        self.plot_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.plot_widget.customContextMenuRequested.connect(self.show_context_menu)
-        
-        self.view_box = self.plot_widget.plotItem.vb
-        
-        self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
-        self.view_box.sigYRangeChanged.connect(self.update_info_position)
-        self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
-        self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
-        
         layout.addWidget(self.plot_widget)
-        
-        # Custom indicator legend panel
-        self.legend_panel = QWidget()
-        self.legend_panel.setStyleSheet("background-color: #2a2a2a;")
-        self.legend_layout = QHBoxLayout(self.legend_panel)
-        self.legend_layout.setContentsMargins(5, 2, 5, 2)
-        self.legend_layout.setSpacing(5)
-        self.legend_items = []
-        layout.addWidget(self.legend_panel)
         
         self.info_text = pg.TextItem("", color='#FFFF00', anchor=(0, 0))
         self.info_text.setFont(pg.QtGui.QFont('monospace', 10))
@@ -203,6 +176,7 @@ class ChartView(QWidget):
         
         plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved, 
                                            rateLimit=60, slot=self.mouse_moved)
+        self._mouse_proxy = plot_widget_proxy
         
         self.candlestick_item = None
         self.volume_item = None
@@ -395,21 +369,22 @@ class ChartView(QWidget):
                 if 0 <= x_idx < len(self.df):
                     row = self.df.iloc[x_idx]
                     
+                    bar_idx = x_idx
                     info_parts = []
-                    info_parts.append(f"Bar: {x_idx}")
-                    info_parts.append(f"O: {row['Open']:.2f}")
-                    info_parts.append(f"H: {row['High']:.2f}")
-                    info_parts.append(f"L: {row['Low']:.2f}")
-                    info_parts.append(f"C: {row['Close']:.2f}")
-                    
-                    if hasattr(self.df.index[x_idx], 'strftime'):
-                        info_parts.append(f"D: {self.df.index[x_idx].strftime('%Y-%m-%d')}")
-                    
-                    for line in self.overlay_lines:
-                        if len(line.data) > x_idx:
-                            val = line.data[x_idx]
+                    dt_str = ""
+                    idx = self.df.index[x_idx]
+                    if hasattr(idx, 'strftime'):
+                        try:
+                            dt_str = idx.strftime('%Y-%m-%d %H:%M')
+                        except Exception:
+                            dt_str = str(idx)
+                    info_parts.append(f"{dt_str}  O: {row['Open']:.2f}  H: {row['High']:.2f}  L: {row['Low']:.2f}  C: {row['Close']:.2f}")
+                    for overlay_line in self.overlay_lines:
+                        plot_line = overlay_line.plot_line
+                        if len(plot_line.data) > x_idx:
+                            val = plot_line.data[x_idx]
                             if not np.isnan(val):
-                                info_parts.append(f"{line.name}: {val:.2f}")
+                                info_parts.append(f"{plot_line.name}: {val:.2f}")
                     
                     self.info_text.setText("  ".join(info_parts))
                     self.update_info_position()
@@ -470,8 +445,26 @@ class ChartView(QWidget):
         self.volume_item = None
         self.indicator_curves.clear()
         
+        # Re-add axis and text items that were cleared
+        price_axis = PriceAxisItem(orientation='right')
+        price_axis.setStyle(showValues=True)
+        price_axis.setZValue(1000)
+        self.plot_widget.setAxisItems({'right': price_axis})
+        self.view_box = self.plot_widget.plotItem.vb
+        self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
+        self.view_box.sigYRangeChanged.connect(self.update_info_position)
+        self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
+        self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
+        self.view_box.sigXRangeChanged.connect(self.update_ohlc_legend_position)
+        self.plot_widget.addItem(self.info_text, ignoreBounds=True)
+        self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
+                                           rateLimit=60, slot=self.mouse_moved)
+        
         if df is None or df.empty:
+            self.info_text.setText("")
             return
+        
+        self.update_ohlc_legend()
         
         self.plot_widget.setTitle(symbol, color='w', size='14pt')
         
@@ -517,8 +510,9 @@ class ChartView(QWidget):
                     self.plot_widget.addItem(curve)
                     self.indicator_curves.append(curve)
         
-        # Update legend panel
-        self.update_legend_panel()
+        # Show legend if there are overlay lines
+        if len(self.overlay_lines) > 0:
+            self.plot_widget.addLegend()
         
         start_idx = max(0, len(df) - self.visible_bars)
         self.plot_widget.setXRange(start_idx, len(df))
@@ -532,82 +526,6 @@ class ChartView(QWidget):
         for tl in self.trend_lines:
             if 'item' in tl:
                 self.plot_widget.addItem(tl['item'])
-    
-    def update_legend_panel(self):
-        # Clear old legend items
-        for item in self.legend_items:
-            item.clicked.disconnect()
-            self.legend_layout.removeWidget(item)
-            item.deleteLater()
-        self.legend_items.clear()
-        
-        # Add new legend items for overlay lines
-        for overlay_line in self.overlay_lines:
-            name = overlay_line.unique_name
-            color = overlay_line.plot_line.color
-            visible = overlay_line.visible
-            
-            legend_item = IndicatorLegendItem(name, visible, color)
-            legend_item.clicked.connect(lambda checked, n=name: self.toggle_indicator_visibility(n))
-            self.legend_layout.addWidget(legend_item)
-            self.legend_items.append(legend_item)
-        
-        # Hide legend panel if no indicators
-        self.legend_panel.setVisible(len(self.overlay_lines) > 0)
-    
-    def set_initial_y_range(self):
-        if self.df is None or len(self.df) == 0:
-            return
-        
-        start_idx = max(0, len(self.df) - self.visible_bars)
-        visible_df = self.df.iloc[start_idx:]
-        
-        if visible_df.empty:
-            return
-        
-        min_price = float(visible_df['Low'].min())
-        max_price = float(visible_df['High'].max())
-        price_range = max_price - min_price
-        
-        if price_range == 0:
-            price_range = max_price * 0.1 if max_price > 0 else 1.0
-            min_price -= price_range / 2
-            max_price += price_range / 2
-            price_range = max_price - min_price
-        
-        y_min = min_price - price_range * 0.05
-        y_max = max_price + price_range * 0.05
-        
-        self.plot_widget.setYRange(y_min, y_max, padding=0)
-    
-    def adjust_volume_height(self):
-        if self.df is None or len(self.df) == 0 or 'Volume' not in self.df.columns:
-            return
-        
-        if self.volume_item is None:
-            return
-        
-        view_range = self.view_box.viewRange()
-        y_min, y_max = view_range[1]
-        
-        x_min, x_max = int(max(0, view_range[0][0])), int(min(len(self.df) - 1, view_range[0][1]))
-        
-        if x_min >= x_max:
-            return
-        
-        visible_df = self.df.iloc[x_min:x_max+1]
-        if visible_df.empty:
-            return
-        
-        max_volume = float(visible_df['Volume'].max())
-        min_price = float(visible_df['Low'].min())
-        
-        price_range = y_max - y_min
-        volume_height_percentage = 0.25
-        volume_scale = (price_range * volume_height_percentage) / max_volume if max_volume > 0 else 0
-        
-        self.volume_item.setScale(volume_scale)
-        self.volume_item.setYOffset(y_min - price_range * 0.05)
     
     def update_date_ticks(self):
         if self.df is None or len(self.df) == 0:
@@ -645,10 +563,91 @@ class ChartView(QWidget):
             view_range = self.view_box.viewRange()
             x_min, x_max = view_range[0]
             y_min, y_max = view_range[1]
-            padding = (y_max - y_min) * 0.02
-            self.info_text.setPos(x_min + 2, y_max - padding)
+            y_range = y_max - y_min
+            view_height = self.view_box.size().height()
+            if view_height > 0:
+                pts_per_pixel = y_range / view_height
+                font_size = self.info_text.textItem.font().pointSizeF()
+                font_pixels = font_size * 1.333
+                offset = 1.5 * font_pixels * pts_per_pixel
+            else:
+                offset = y_range * 0.03
+            self.info_text.setPos(x_min + 2, y_max - offset)
     
-    def add_indicator_line(self, plot_line: PlotLine, visible=True, unique_name=None):
+    def update_ohlc_legend(self):
+        if self.df is not None and len(self.df) > 0:
+            last_row = self.df.iloc[-1]
+            last_idx = self.df.index[-1]
+            dt_str = ""
+            if hasattr(last_idx, 'strftime'):
+                try:
+                    dt_str = last_idx.strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    dt_str = str(last_idx)
+            text = f"{dt_str}  O: {last_row['Open']:.2f}  H: {last_row['High']:.2f}  L: {last_row['Low']:.2f}  C: {last_row['Close']:.2f}"
+            self.info_text.setText(text)
+            self.update_info_position()
+    
+    def update_ohlc_legend_position(self):
+        try:
+            self.update_info_position()
+        except Exception:
+            pass
+    
+    def adjust_volume_height(self):
+        if self.df is None or len(self.df) == 0 or 'Volume' not in self.df.columns:
+            return
+        
+        if self.volume_item is None:
+            return
+        
+        view_range = self.view_box.viewRange()
+        y_min, y_max = view_range[1]
+        
+        x_min, x_max = int(max(0, view_range[0][0])), int(min(len(self.df) - 1, view_range[0][1]))
+        
+        if x_min >= x_max:
+            return
+        
+        visible_df = self.df.iloc[x_min:x_max+1]
+        if visible_df.empty:
+            return
+        
+        max_volume = float(visible_df['Volume'].max())
+        
+        price_range = y_max - y_min
+        volume_height_percentage = 0.2
+        volume_scale = (price_range * volume_height_percentage) / max_volume if max_volume > 0 else 0
+        
+        self.volume_item.setScale(volume_scale)
+        self.volume_item.setYOffset(y_min - price_range * 0.05)
+    
+    def set_initial_y_range(self):
+        if self.df is None or len(self.df) == 0:
+            return
+        
+        start_idx = max(0, len(self.df) - self.visible_bars)
+        visible_df = self.df.iloc[start_idx:]
+        
+        if visible_df.empty:
+            return
+        
+        min_price = float(visible_df['Low'].min())
+        max_price = float(visible_df['High'].max())
+        price_range = max_price - min_price
+        
+        if price_range == 0:
+            price_range = max_price * 0.1 if max_price > 0 else 1.0
+            min_price -= price_range / 2
+            max_price += price_range / 2
+            price_range = max_price - min_price
+        
+        y_min = min_price - price_range * 0.05
+        y_max = max_price + price_range * 0.05
+        
+        self.plot_widget.setYRange(y_min, y_max, padding=0)
+    
+    def add_indicator_line(self, plot_line, visible=True, unique_name=None):
         self.overlay_lines.append(OverlayLine(plot_line, visible, unique_name or plot_line.name))
         if self.df is not None:
             self.plot_candlesticks(self.df, self.symbol)
@@ -670,17 +669,8 @@ class ChartView(QWidget):
                 if self.df is not None:
                     self.plot_candlesticks(self.df, self.symbol)
                 break
-    
     def clear_indicators(self):
         self.overlay_lines.clear()
-        # Clear legend panel
-        for item in self.legend_items:
-            item.clicked.disconnect()
-            self.legend_layout.removeWidget(item)
-            item.deleteLater()
-        self.legend_items.clear()
-        self.legend_panel.setVisible(False)
-        
         if self.df is not None:
             self.plot_candlesticks(self.df, self.symbol)
     
