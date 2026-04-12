@@ -21,7 +21,7 @@
 
 - Now there is a new draw mode to draw trendlines.
 - Trendlines have a circle on coordinates.
-- Trendlines are editable, it is possible to change color and coordinates.
+- Trendlines are editable, it is possible to change color and coordinates with a double click.
 - At loading there is a legend that shows the program is loading data.
-
+- Now it is possible to exist draw mode clicking anywhere there is no trendlines, or other drawings.
 

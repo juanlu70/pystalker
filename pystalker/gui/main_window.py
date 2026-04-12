@@ -463,6 +463,7 @@ class PyStalkerWindow(QMainWindow):
             tab.chart_view.set_colors(bull_color, bear_color)
         
         tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
+        tab.chart_view.drawingDoubleClicked.connect(self.on_drawing_double_clicked)
         
         tab.load_data(df, symbol, interval)
         
@@ -681,6 +682,20 @@ class PyStalkerWindow(QMainWindow):
     
     def on_draw_mode_toggled(self, enabled: bool):
         self.draw_mode_action.setChecked(enabled)
+    
+    def on_drawing_double_clicked(self, drawing):
+        from .drawing_dialog import TrendlineSettingsDialog
+        tab = self.chart_tabs.get_current_tab()
+        if not tab:
+            return
+        dialog = TrendlineSettingsDialog(drawing, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            drawing['color'] = dialog.get_color()
+            drawing['snap'] = dialog.get_snap()
+            drawing['item'].color = drawing['color']
+            drawing['item'].generatePicture()
+            drawing['item'].update()
+            tab.chart_view.snap_drawing_points(drawing)
     
     def load_saved_symbols(self):
         symbols = self.database.get_symbols()

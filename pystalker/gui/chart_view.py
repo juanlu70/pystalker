@@ -147,6 +147,7 @@ class ChartView(QWidget):
     range_changed = pyqtSignal(float, float, object)
     colors_changed = pyqtSignal()
     drawModeToggled = pyqtSignal(bool)
+    drawingDoubleClicked = pyqtSignal(object)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -352,7 +353,8 @@ class ChartView(QWidget):
             self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
             self.update_info_position()
         else:
-            self.plot_widget.setMouseEnabled(x=True, y=False)
+            self.releaseMouse()
+            self.plot_widget.setMouseEnabled(x=True, y=True)
             self.drawing_trendline = False
             self.trendline_points = []
             if self.preview_line is not None:
@@ -376,7 +378,7 @@ class ChartView(QWidget):
             self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
             self.update_info_position()
         else:
-            self.plot_widget.setMouseEnabled(x=True, y=False)
+            self.plot_widget.setMouseEnabled(x=True, y=True)
             self.info_text.setText("")
     
     def mousePressEvent(self, event: QMouseEvent):
@@ -390,24 +392,69 @@ class ChartView(QWidget):
                 if hit:
                     self._dragging_drawing = hit[0]
                     self._dragging_point_idx = hit[1]
+                    self.grabMouse()
                     event.accept()
                     return
-                self.handle_trendline_click(event)
+                hit_line = self._hit_test_drawing_line(event)
+                if hit_line:
+                    self._dragging_drawing = hit_line
+                    hit_endpoint = self._hit_test_drawing_endpoint(event)
+                    if hit_endpoint:
+                        self._dragging_drawing = hit_endpoint[0]
+                        self._dragging_point_idx = hit_endpoint[1]
+                    else:
+                        self._dragging_point_idx = 0
+                    self.grabMouse()
+                    event.accept()
+                    return
+                self.draw_mode = False
+                self.drawModeToggled.emit(False)
                 event.accept()
                 return
             elif self.drawing_trendline:
                 self.handle_trendline_click(event)
                 event.accept()
                 return
+            else:
+                hit_endpoint = self._hit_test_drawing_endpoint(event)
+                hit_line = self._hit_test_drawing_line(event)
+                if hit_endpoint:
+                    self.draw_mode = True
+                    self.drawModeToggled.emit(True)
+                    self._dragging_drawing = hit_endpoint[0]
+                    self._dragging_point_idx = hit_endpoint[1]
+                    self.grabMouse()
+                    event.accept()
+                    return
+                elif hit_line:
+                    self.draw_mode = True
+                    self.drawModeToggled.emit(True)
+                    event.accept()
+                    return
         super().mousePressEvent(event)
     
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton and self._dragging_drawing is not None:
             self._dragging_drawing = None
             self._dragging_point_idx = None
+            self.releaseMouse()
             event.accept()
             return
         super().mouseReleaseEvent(event)
+    
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            hit_endpoint = self._hit_test_drawing_endpoint(event)
+            hit_line = self._hit_test_drawing_line(event)
+            if hit_endpoint:
+                self.drawingDoubleClicked.emit(hit_endpoint[0])
+                event.accept()
+                return
+            elif hit_line:
+                self.drawingDoubleClicked.emit(hit_line)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
     
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._dragging_drawing is not None and self._draw_mode:
@@ -438,6 +485,39 @@ class ChartView(QWidget):
             for i, (px, py) in enumerate(drawing['points']):
                 if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
                     return (drawing, i)
+        return None
+    
+    def _hit_test_drawing_line(self, event):
+        from PyQt6.QtCore import QPointF
+        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
+        mx, my = pos.x(), pos.y()
+        view_range = self.view_box.viewRange()
+        y_range = view_range[1][1] - view_range[1][0]
+        view_h = self.view_box.size().height()
+        x_range = view_range[0][1] - view_range[0][0]
+        view_w = self.view_box.size().width()
+        threshold_y = (y_range / view_h) * 4 if view_h > 0 else 1
+        threshold_x = (x_range / view_w) * 4 if view_w > 0 else 1
+        
+        for drawing in self.drawings:
+            if 'item' not in drawing or len(drawing.get('points', [])) < 2:
+                continue
+            p1 = drawing['points'][0]
+            p2 = drawing['points'][1]
+            x1, y1 = p1
+            x2, y2 = p2
+            dx = x2 - x1
+            dy = y2 - y1
+            length_sq = dx * dx + dy * dy
+            if length_sq == 0:
+                continue
+            t = ((mx - x1) * dx + (my - y1) * dy) / length_sq
+            t = max(0, t)
+            proj_y = y1 + t * dy
+            dist_x = abs(mx - (x1 + t * dx))
+            dist_y = abs(my - proj_y)
+            if dist_y < threshold_y and dist_x < threshold_x * 3:
+                return drawing
         return None
     
     def _handle_trendline_drag(self, event):
@@ -514,7 +594,7 @@ class ChartView(QWidget):
             if self._draw_mode:
                 self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
             else:
-                self.plot_widget.setMouseEnabled(x=True, y=False)
+                self.plot_widget.setMouseEnabled(x=True, y=True)
                 self.info_text.setText("Trendline drawn. Press T to draw another.")
     
     def handle_trendline_move(self, event):
