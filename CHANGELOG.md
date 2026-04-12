@@ -17,5 +17,11 @@
 - Restored indicator legends in the main graph.
 - Added individual colors for each parameter of the indicator.
 
+2026-04-12
+
+- Now there is a new draw mode to draw trendlines.
+- Trendlines have a circle on coordinates.
+- Trendlines are editable, it is possible to change color and coordinates.
+- At loading there is a legend that shows the program is loading data.
 
 

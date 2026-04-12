@@ -169,6 +169,18 @@ class Database:
             )
         ''')
         
+        drawings_table = f'"{symbol}_drawings"'
+        cursor.execute(f'''
+            CREATE TABLE IF NOT EXISTS {drawings_table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                color TEXT NOT NULL,
+                snap TEXT,
+                params TEXT,
+                points TEXT NOT NULL
+            )
+        ''')
+        
         self.conn.commit()
     
     def save_bars(self, bar_data: BarData, interval: str = '1d'):
@@ -406,6 +418,48 @@ class Database:
         else:
             cursor.execute('SELECT key, value FROM settings')
         return {row[0]: row[1] for row in cursor.fetchall()}
+    
+    def save_drawings(self, symbol: str, drawings: list):
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        
+        drawings_table = f'"{symbol}_drawings"'
+        cursor.execute(f'DELETE FROM {drawings_table}')
+        
+        for drawing in drawings:
+            import json
+            cursor.execute(f'''
+                INSERT INTO {drawings_table} (type, color, snap, params, points)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                drawing.get('type', 'trendline'),
+                drawing.get('color', '#FFD700'),
+                drawing.get('snap', ''),
+                json.dumps(drawing.get('params', {})),
+                json.dumps(drawing.get('points', []))
+            ))
+        
+        self.conn.commit()
+    
+    def load_drawings(self, symbol: str) -> list:
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        
+        drawings_table = f'"{symbol}_drawings"'
+        cursor.execute(f'SELECT type, color, snap, params, points FROM {drawings_table}')
+        
+        drawings = []
+        for row in cursor.fetchall():
+            import json
+            drawings.append({
+                'type': row[0],
+                'color': row[1],
+                'snap': row[2] if row[2] else '',
+                'params': json.loads(row[3]) if row[3] else {},
+                'points': json.loads(row[4]) if row[4] else []
+            })
+        
+        return drawings
     
     def close(self):
         if self.conn:
