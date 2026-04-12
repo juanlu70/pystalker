@@ -189,3 +189,64 @@ class EditTrendlinesDialog(QDialog):
     
     def get_removed_items(self):
         return self._removed_items
+
+
+class TrendlineSettingsDialog(QDialog):
+    def __init__(self, drawing, parent=None):
+        super().__init__(parent)
+        self.drawing = drawing
+        self.setWindowTitle("Trendline Settings")
+        self.setMinimumWidth(300)
+        self._color = drawing.get('color', '#FFFFFF')
+        self._snap = drawing.get('snap', '')
+        self._init_ui()
+    
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        
+        self.color_label = QLabel()
+        self.color_label.setFixedSize(60, 25)
+        self.color_label.setStyleSheet(f"background-color: {self._color}; border: 1px solid white;")
+        self.color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.color_label.mousePressEvent = lambda e: self._choose_color()
+        color_row = QHBoxLayout()
+        color_row.addWidget(self.color_label)
+        color_btn = QPushButton("Choose Color")
+        color_btn.clicked.connect(self._choose_color)
+        color_row.addWidget(color_btn)
+        color_row.addStretch()
+        form.addRow("Color:", color_row)
+        
+        self.snap_combo = QComboBox()
+        self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
+        snap_map = {'': 0, 'open': 1, 'high': 2, 'low': 3, 'close': 4}
+        self.snap_combo.setCurrentIndex(snap_map.get(self._snap, 0))
+        form.addRow("Snap:", self.snap_combo)
+        
+        points = self.drawing.get('points', [])
+        if len(points) >= 2:
+            form.addRow(QLabel("Point 1:"), QLabel(f"Bar: {int(points[0][0])}  Y: {points[0][1]:.2f}"))
+            form.addRow(QLabel("Point 2:"), QLabel(f"Bar: {int(points[1][0])}  Y: {points[1][1]:.2f}"))
+        
+        layout.addLayout(form)
+        
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def _choose_color(self):
+        color = QColorDialog.getColor(QColor(self._color), self, "Select Trendline Color")
+        if color.isValid():
+            self._color = color.name()
+            self.color_label.setStyleSheet(f"background-color: {self._color}; border: 1px solid white;")
+    
+    def get_color(self):
+        return self._color
+    
+    def get_snap(self):
+        snap_map = {0: '', 1: 'open', 2: 'high', 3: 'low', 4: 'close'}
+        return snap_map.get(self.snap_combo.currentIndex(), '')
