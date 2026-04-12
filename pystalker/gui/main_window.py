@@ -143,12 +143,14 @@ class PyStalkerWindow(QMainWindow):
             
             progress.setRange(0, total)
             progress.setValue(1)
-            self.statusBar().showMessage("Ready", 2000)
             QApplication.processEvents()
             
             # Load remaining tabs in the background
             background_tabs = open_tabs[1:]
             for i, symbol in enumerate(background_tabs):
+                self.statusBar().showMessage(f"Loading {symbol}...")
+                QApplication.processEvents()
+                
                 cached_data = self.database.load_bars(symbol)
                 if cached_data:
                     self.assets.add_asset(symbol, cached_data)
@@ -254,6 +256,10 @@ class PyStalkerWindow(QMainWindow):
         clear_trendlines_action.triggered.connect(self.on_clear_trendlines)
         draw_menu.addAction(clear_trendlines_action)
         
+        edit_trendlines_action = QAction("Edit Trendlines...", self)
+        edit_trendlines_action.triggered.connect(self.on_edit_trendlines)
+        draw_menu.addAction(edit_trendlines_action)
+        
         snap_menu = draw_menu.addMenu("Snap Mode")
         
         snap_none_action = QAction("None", self)
@@ -358,6 +364,15 @@ class PyStalkerWindow(QMainWindow):
         
         toolbar.addSeparator()
         
+        self.draw_mode_action = QAction(load_icon('trend'), "Draw Mode", toolbar)
+        self.draw_mode_action.setCheckable(True)
+        self.draw_mode_action.setChecked(False)
+        self.draw_mode_action.setToolTip("Toggle Draw Mode (disables panning/zooming)")
+        self.draw_mode_action.triggered.connect(self.on_toggle_draw_mode)
+        toolbar.addAction(self.draw_mode_action)
+        
+        toolbar.addSeparator()
+        
         crosshair_action = QAction(load_icon('crosshair'), "Crosshair", toolbar)
         crosshair_action.setCheckable(True)
         crosshair_action.setChecked(True)
@@ -447,6 +462,8 @@ class PyStalkerWindow(QMainWindow):
         if bull_color and bear_color:
             tab.chart_view.set_colors(bull_color, bear_color)
         
+        tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
+        
         tab.load_data(df, symbol, interval)
         
         saved_indicators = self.database.load_chart_indicators(symbol)
@@ -472,13 +489,15 @@ class PyStalkerWindow(QMainWindow):
         if saved_indicators:
             tab.chart_view.plot_candlesticks(df, symbol)
         
-        if from_session_restore:
-            view_state = self.database.load_chart_view_state(symbol)
-            if view_state:
-                tab.chart_view.set_view_state({
-                    'x_range': (view_state.get('x_min'), view_state.get('x_max')),
-                    'y_range': (view_state.get('y_min'), view_state.get('y_max'))
-                })
+        saved_drawings = self.database.load_drawings(symbol)
+        if saved_drawings:
+            tab.chart_view.restore_drawings(saved_drawings)
+        
+        view_state = self.database.load_chart_view_state(symbol)
+        tab.chart_view.set_view_state({
+            'x_range': (view_state.get('x_min'), view_state.get('x_max')),
+            'y_range': (view_state.get('y_min'), view_state.get('y_max'))
+        } if view_state else None)
         
         if not from_session_restore:
             self.save_session()
@@ -655,6 +674,14 @@ class PyStalkerWindow(QMainWindow):
         if tab:
             tab.chart_view.set_crosshair_enabled(checked)
     
+    def on_toggle_draw_mode(self, checked: bool):
+        tab = self.chart_tabs.get_current_tab()
+        if tab:
+            tab.chart_view.draw_mode = checked
+    
+    def on_draw_mode_toggled(self, enabled: bool):
+        self.draw_mode_action.setChecked(enabled)
+    
     def load_saved_symbols(self):
         symbols = self.database.get_symbols()
         for symbol in symbols:
@@ -696,6 +723,7 @@ class PyStalkerWindow(QMainWindow):
                     'y_max': view_state.get('chart', {}).get('y_range', (0, 0))[1]
                 })
                 self.database.save_chart_indicators(symbol, indicators)
+                self.database.save_drawings(symbol, tab.chart_view.get_drawings())
                 
                 splitter_state = tab.splitter.saveState()
                 settings[f'splitter_state_{symbol}'] = bytes(splitter_state.toBase64()).decode()
@@ -728,10 +756,10 @@ class PyStalkerWindow(QMainWindow):
     def on_clear_trendlines(self):
         tab = self.chart_tabs.get_current_tab()
         if tab:
-            for tl in tab.chart_view.trend_lines:
-                if 'item' in tl:
-                    tab.chart_view.plot_widget.removeItem(tl['item'])
-            tab.chart_view.trend_lines.clear()
+            for drawing in tab.chart_view.drawings:
+                if 'item' in drawing:
+                    tab.chart_view.plot_widget.removeItem(drawing['item'])
+            tab.chart_view.drawings.clear()
             if tab.chart_view.preview_line is not None:
                 tab.chart_view.plot_widget.removeItem(tab.chart_view.preview_line)
                 tab.chart_view.preview_line = None
@@ -740,8 +768,30 @@ class PyStalkerWindow(QMainWindow):
         tab = self.chart_tabs.get_current_tab()
         if tab:
             tab.chart_view.snap_mode = mode
-            mode_text = f"Snap: {mode}" if mode else "Snap: None"
-            tab.chart_view.info_label.setText(mode_text + " | O: -- H: -- L: -- C: --")
+            for drawing in tab.chart_view.drawings:
+                tab.chart_view.snap_drawing_points(drawing)
+    
+    def on_edit_trendlines(self):
+        from .drawing_dialog import EditTrendlinesDialog
+        tab = self.chart_tabs.get_current_tab()
+        if not tab:
+            return
+        drawings = tab.chart_view.drawings
+        if not drawings:
+            QMessageBox.information(self, "Edit Trendlines", "No trendlines on current chart.")
+            return
+        dialog = EditTrendlinesDialog(drawings, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            for item in dialog.get_removed_items():
+                tab.chart_view.plot_widget.removeItem(item)
+            
+            for d in drawings:
+                if 'item' in d and d.get('color'):
+                    d['item'].color = d['color']
+                    d['item'].points = d.get('points', [])
+                    d['item'].generatePicture()
+                    d['item'].update()
+                    tab.chart_view.snap_drawing_points(d)
     
     def restore_settings(self):
         from PyQt6.QtCore import QSettings
