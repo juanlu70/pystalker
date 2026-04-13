@@ -144,7 +144,6 @@ class Database:
             cursor.execute('DROP TABLE IF EXISTS chart_colors')
             
             self.conn.commit()
-            print(f"Migrated {len(old_symbols)} symbols to new schema")
     
     def _ensure_symbol_tables(self, symbol: str):
         cursor = self.conn.cursor()

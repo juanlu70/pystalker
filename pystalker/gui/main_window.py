@@ -2,7 +2,6 @@
 PyStalker - Main Window
 Porting of Qtstalker to Python/PyQt6
 """
-import os
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -10,8 +9,8 @@ from PyQt6.QtWidgets import (
     QMessageBox, QFileDialog, QComboBox, QLabel, QDialog, QInputDialog,
     QDialogButtonBox, QApplication
 )
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QByteArray
-from PyQt6.QtGui import QPixmap, QAction, QIcon
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QByteArray, QTimer, QSettings
+from PyQt6.QtGui import QAction, QIcon
 
 from .navigator import AssetNavigator
 from .chart_view import ChartView
@@ -20,6 +19,7 @@ from .chart_tab import ChartTabWidget
 from ..core.data import BarData, ChartAssets
 from ..core.providers import DataManager
 from ..core.database import Database
+from ..core.indicators import IndicatorManager, Indicator
 
 ICONS_DIR = Path(__file__).parent.parent.parent / 'assets'
 
@@ -91,13 +91,11 @@ class PyStalkerWindow(QMainWindow):
         self.setWindowTitle("PyStalker - Stock Charting Tool")
         self.setMinimumSize(1024, 768)
         
-        from PyQt6.QtCore import Qt
         self.setWindowState(Qt.WindowState.WindowMaximized)
         
         self.init_ui()
         self.load_saved_symbols()
         
-        from PyQt6.QtCore import QTimer
         QTimer.singleShot(100, self.restore_session_lazy)
     
     def restore_session_lazy(self):
@@ -218,6 +216,11 @@ class PyStalkerWindow(QMainWindow):
         download_yahoo.triggered.connect(self.on_open_chart)
         file_menu.addAction(download_yahoo)
         
+        update_all_action = QAction(load_icon('update_data'), "Update All Stock Data", self)
+        update_all_action.setShortcut("Ctrl+U")
+        update_all_action.triggered.connect(self.on_update_all)
+        file_menu.addAction(update_all_action)
+        
         import_csv = QAction(load_icon('import'), "Import CSV...", self)
         import_csv.triggered.connect(self.on_import_csv)
         file_menu.addAction(import_csv)
@@ -252,13 +255,23 @@ class PyStalkerWindow(QMainWindow):
         trendline_action.triggered.connect(self.on_draw_trendline)
         draw_menu.addAction(trendline_action)
         
-        clear_trendlines_action = QAction("Clear Trendlines", self)
-        clear_trendlines_action.triggered.connect(self.on_clear_trendlines)
+        hline_action = QAction("Draw Horizontal Line", self)
+        hline_action.triggered.connect(self.on_draw_hline)
+        draw_menu.addAction(hline_action)
+        
+        vline_action = QAction("Draw Vertical Line", self)
+        vline_action.triggered.connect(self.on_draw_vline)
+        draw_menu.addAction(vline_action)
+        
+        draw_menu.addSeparator()
+        
+        clear_trendlines_action = QAction("Clear Drawings", self)
+        clear_trendlines_action.triggered.connect(self.on_clear_drawings)
         draw_menu.addAction(clear_trendlines_action)
         
-        edit_trendlines_action = QAction("Edit Trendlines...", self)
-        edit_trendlines_action.triggered.connect(self.on_edit_trendlines)
-        draw_menu.addAction(edit_trendlines_action)
+        edit_drawings_action = QAction("Edit Drawings...", self)
+        edit_drawings_action.triggered.connect(self.on_edit_drawings)
+        draw_menu.addAction(edit_drawings_action)
         
         snap_menu = draw_menu.addMenu("Snap Mode")
         
@@ -331,6 +344,11 @@ class PyStalkerWindow(QMainWindow):
         download_action.triggered.connect(self.on_open_chart)
         toolbar.addAction(download_action)
         
+        update_all_action = QAction(load_icon('update_data'), "Update All Stock Data", self)
+        update_all_action.setToolTip("Update all stock data from Yahoo Finance")
+        update_all_action.triggered.connect(self.on_update_all)
+        toolbar.addAction(update_all_action)
+        
         toolbar.addSeparator()
         
         timeframe_label = toolbar.addWidget(QLabel())
@@ -380,8 +398,6 @@ class PyStalkerWindow(QMainWindow):
         toolbar.addAction(crosshair_action)
     
     def on_open_chart(self):
-        from PyQt6.QtWidgets import QInputDialog
-        
         text, ok = QInputDialog.getText(self, "Download from Yahoo Finance", 
                                          "Enter ticker symbol (e.g., AAPL, MSFT, GOOGL):")
         if ok and text:
@@ -402,6 +418,64 @@ class PyStalkerWindow(QMainWindow):
                 self.status_bar.showMessage(f"Imported {data.symbol} ({data.count()} bars)")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to import CSV: {e}")
+    
+    def on_update_all(self):
+        symbols = self.database.get_symbols()
+        if not symbols:
+            QMessageBox.information(self, "Update All Stock Data", "No symbols in the database. Download some data first.")
+            return
+        
+        progress = QProgressBar(self)
+        progress.setRange(0, len(symbols))
+        progress.setValue(0)
+        progress.setMaximumHeight(20)
+        progress.setTextVisible(True)
+        self.status_bar.addPermanentWidget(progress)
+        self.status_bar.showMessage(f"Updating {len(symbols)} symbols...")
+        QApplication.processEvents()
+        
+        errors = []
+        for i, symbol in enumerate(symbols):
+            self.status_bar.showMessage(f"Updating {symbol} ({i+1}/{len(symbols)})...")
+            QApplication.processEvents()
+            
+            try:
+                bar_data = self.data_manager.fetch_yahoo(symbol)
+                if bar_data and bar_data.count() > 0:
+                    self.database.save_bars(bar_data)
+                    self.assets.add_asset(symbol, bar_data)
+                    self.navigator.add_asset(symbol)
+                    
+                    tab = self.chart_tabs.tabs.get(symbol)
+                    if tab:
+                        df = bar_data.to_dataframe()
+                        indicators = tab.get_indicators()
+                        tab.chart_view.overlay_lines.clear()
+                        tab.load_data(df, symbol)
+                        
+                        for ind in indicators:
+                            colors = ind.get('colors', {})
+                            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, ind.get('params'), colors=colors)
+                            if indicator and ind.get('type') == 'overlay':
+                                visible = ind.get('visible', True)
+                                for line in indicator.lines:
+                                    tab.chart_view.add_indicator_line(line, visible=visible, unique_name=ind['name'])
+                        
+                        tab.chart_view.plot_candlesticks(df, symbol)
+                        tab.chart_view._needs_view_reset = True
+            except Exception as e:
+                errors.append((symbol, str(e)))
+            
+            progress.setValue(i + 1)
+            QApplication.processEvents()
+        
+        self.status_bar.removeWidget(progress)
+        
+        if errors:
+            error_msg = "\n".join(f"{s}: {e}" for s, e in errors)
+            QMessageBox.warning(self, "Update Errors", f"Some symbols failed to update:\n{error_msg}")
+        
+        self.status_bar.showMessage(f"Updated {len(symbols) - len(errors)}/{len(symbols)} symbols", 3000)
     
     def fetch_symbol(self, symbol: str, interval: str = '1d'):
         self.download_dialog = DownloadDialog(self)
@@ -442,8 +516,6 @@ class PyStalkerWindow(QMainWindow):
         self.status_bar.showMessage("Download failed")
     
     def load_chart(self, symbol: str, interval: str = '1d', from_session_restore: bool = False, bull_color: str = None, bear_color: str = None, set_current: bool = True):
-        from ..core.indicators import IndicatorManager
-        
         asset = self.assets.get_asset(symbol)
         if not asset:
             cached_data = self.database.load_bars(symbol, interval)
@@ -493,12 +565,6 @@ class PyStalkerWindow(QMainWindow):
         saved_drawings = self.database.load_drawings(symbol)
         if saved_drawings:
             tab.chart_view.restore_drawings(saved_drawings)
-        
-        view_state = self.database.load_chart_view_state(symbol)
-        tab.chart_view.set_view_state({
-            'x_range': (view_state.get('x_min'), view_state.get('x_max')),
-            'y_range': (view_state.get('y_min'), view_state.get('y_max'))
-        } if view_state else None)
         
         if not from_session_restore:
             self.save_session()
@@ -560,8 +626,6 @@ class PyStalkerWindow(QMainWindow):
             self.redraw_all_indicators(new_indicators)
     
     def redraw_all_indicators(self, indicators):
-        from ..core.indicators import IndicatorManager
-        
         tab = self.chart_tabs.get_current_tab()
         if not tab or not tab.symbol:
             return
@@ -603,8 +667,6 @@ class PyStalkerWindow(QMainWindow):
         self.database.save_chart_indicators(tab.symbol, tab.get_indicators())
     
     def add_indicator_to_chart(self, indicator_name: str, params: dict = None, color: str = None, colors: dict = None):
-        from ..core.indicators import IndicatorManager, Indicator
-        
         tab = self.chart_tabs.get_current_tab()
         if not tab or not tab.symbol:
             return
@@ -635,14 +697,6 @@ class PyStalkerWindow(QMainWindow):
             tab.indicator_view.add_indicator_panel(indicator, df)
         
         self.database.save_chart_indicators(tab.symbol, tab.get_indicators())
-    
-    def on_indicator_added(self, indicator_name: str):
-        self.add_indicator_to_chart(indicator_name)
-    
-    def on_indicator_removed(self, indicator_name: str):
-        tab = self.chart_tabs.get_current_tab()
-        if tab:
-            tab.indicator_view.remove_indicator_panel(indicator_name)
     
     def on_clear_indicators(self):
         tab = self.chart_tabs.get_current_tab()
@@ -684,32 +738,39 @@ class PyStalkerWindow(QMainWindow):
         self.draw_mode_action.setChecked(enabled)
     
     def on_drawing_double_clicked(self, drawing):
-        from .drawing_dialog import TrendlineSettingsDialog
+        from .drawing_dialog import DrawingSettingsDialog
         tab = self.chart_tabs.get_current_tab()
         if not tab:
             return
-        dialog = TrendlineSettingsDialog(drawing, self)
+        dialog = DrawingSettingsDialog(drawing, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            drawing['color'] = dialog.get_color()
-            drawing['snap'] = dialog.get_snap()
-            drawing['item'].color = drawing['color']
-            drawing['item'].generatePicture()
-            drawing['item'].update()
-            tab.chart_view.snap_drawing_points(drawing)
+            if dialog.is_removed():
+                if 'item' in drawing:
+                    tab.chart_view.plot_widget.removeItem(drawing['item'])
+                tab.chart_view.drawings.remove(drawing)
+            else:
+                drawing['color'] = dialog.get_color()
+                drawing['snap'] = dialog.get_snap()
+                drawing_type = drawing.get('type', 'trendline')
+                if drawing_type == 'hline':
+                    drawing['item'].color = drawing['color']
+                    drawing['item'].generatePicture()
+                    drawing['item'].update()
+                    tab.chart_view.snap_drawing_points(drawing)
+                elif drawing_type == 'vline':
+                    drawing['item'].color = drawing['color']
+                    drawing['item'].generatePicture()
+                    drawing['item'].update()
+                else:
+                    drawing['item'].color = drawing['color']
+                    drawing['item'].generatePicture()
+                    drawing['item'].update()
+                    tab.chart_view.snap_drawing_points(drawing)
     
     def load_saved_symbols(self):
         symbols = self.database.get_symbols()
         for symbol in symbols:
             self.navigator.add_asset(symbol)
-    
-    def restore_session(self):
-        open_tabs, current_tab = self.database.load_session()
-        
-        for symbol in open_tabs:
-            cached_data = self.database.load_bars(symbol)
-            if cached_data:
-                self.assets.add_asset(symbol, cached_data)
-                self.load_chart(symbol)
     
     def save_session(self):
         open_tabs = self.chart_tabs.get_open_tabs()
@@ -765,10 +826,25 @@ class PyStalkerWindow(QMainWindow):
     def on_draw_trendline(self):
         tab = self.chart_tabs.get_current_tab()
         if tab:
+            if not tab.chart_view.draw_mode:
+                tab.chart_view.draw_mode = True
+                self.draw_mode_action.setChecked(True)
             tab.chart_view.start_trendline_drawing()
             tab.chart_view.setFocus()
     
-    def on_clear_trendlines(self):
+    def on_draw_hline(self):
+        tab = self.chart_tabs.get_current_tab()
+        if tab:
+            tab.chart_view.start_hline_drawing()
+            tab.chart_view.setFocus()
+    
+    def on_draw_vline(self):
+        tab = self.chart_tabs.get_current_tab()
+        if tab:
+            tab.chart_view.start_vline_drawing()
+            tab.chart_view.setFocus()
+    
+    def on_clear_drawings(self):
         tab = self.chart_tabs.get_current_tab()
         if tab:
             for drawing in tab.chart_view.drawings:
@@ -779,23 +855,16 @@ class PyStalkerWindow(QMainWindow):
                 tab.chart_view.plot_widget.removeItem(tab.chart_view.preview_line)
                 tab.chart_view.preview_line = None
     
-    def set_snap_mode(self, mode):
-        tab = self.chart_tabs.get_current_tab()
-        if tab:
-            tab.chart_view.snap_mode = mode
-            for drawing in tab.chart_view.drawings:
-                tab.chart_view.snap_drawing_points(drawing)
-    
-    def on_edit_trendlines(self):
-        from .drawing_dialog import EditTrendlinesDialog
+    def on_edit_drawings(self):
+        from .drawing_dialog import EditDrawingsDialog
         tab = self.chart_tabs.get_current_tab()
         if not tab:
             return
         drawings = tab.chart_view.drawings
         if not drawings:
-            QMessageBox.information(self, "Edit Trendlines", "No trendlines on current chart.")
+            QMessageBox.information(self, "Edit Drawings", "No drawings on current chart.")
             return
-        dialog = EditTrendlinesDialog(drawings, self)
+        dialog = EditDrawingsDialog(drawings, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             for item in dialog.get_removed_items():
                 tab.chart_view.plot_widget.removeItem(item)
@@ -803,13 +872,11 @@ class PyStalkerWindow(QMainWindow):
             for d in drawings:
                 if 'item' in d and d.get('color'):
                     d['item'].color = d['color']
-                    d['item'].points = d.get('points', [])
                     d['item'].generatePicture()
                     d['item'].update()
                     tab.chart_view.snap_drawing_points(d)
     
     def restore_settings(self):
-        from PyQt6.QtCore import QSettings
         settings = QSettings("PyStalker", "PyStalker")
         
         geometry = settings.value("geometry")
@@ -824,7 +891,6 @@ class PyStalkerWindow(QMainWindow):
         self.save_session()
         self.database.close()
         
-        from PyQt6.QtCore import QSettings
         settings = QSettings("PyStalker", "PyStalker")
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("windowState", self.saveState())

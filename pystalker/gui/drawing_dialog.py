@@ -5,13 +5,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from .shared import SNAP_VALUES, SNAP_INDEX_TO_MODE
 
 
-class EditTrendlinesDialog(QDialog):
+DRAWING_TYPE_LABELS = {'trendline': 'Trendline', 'hline': 'HLine', 'vline': 'VLine'}
+
+
+class EditDrawingsDialog(QDialog):
     def __init__(self, drawings, parent=None):
         super().__init__(parent)
         self.drawings = drawings
-        self.setWindowTitle("Edit Trendlines")
+        self.setWindowTitle("Edit Drawings")
         self.setMinimumWidth(650)
         self.setMinimumHeight(400)
         self._init_ui()
@@ -21,7 +25,7 @@ class EditTrendlinesDialog(QDialog):
         self._removed_items = []
 
         if not self.drawings:
-            layout.addWidget(QLabel("No trendlines on this chart."))
+            layout.addWidget(QLabel("No drawings on this chart."))
             btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
             btn.accepted.connect(self.accept)
             layout.addWidget(btn)
@@ -29,7 +33,7 @@ class EditTrendlinesDialog(QDialog):
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["#", "Color", "Snap", "Points"])
+        self.table.setHorizontalHeaderLabels(["#", "Type", "Color", "Position"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -37,7 +41,7 @@ class EditTrendlinesDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
-        edit_group = QGroupBox("Edit Selected Trendline")
+        edit_group = QGroupBox("Edit Selected Drawing")
         edit_layout = QFormLayout()
 
         self.color_label = QLabel()
@@ -55,9 +59,6 @@ class EditTrendlinesDialog(QDialog):
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
         edit_layout.addRow("Snap:", self.snap_combo)
 
-        snap_values = {'': 0, 'open': 1, 'high': 2, 'low': 3, 'close': 4}
-        self.snap_value_map = {0: '', 1: 'open', 2: 'high', 3: 'low', 4: 'close'}
-
         self.p1x_spin = QDoubleSpinBox()
         self.p1x_spin.setDecimals(0)
         self.p1x_spin.setRange(0, 999999)
@@ -71,19 +72,30 @@ class EditTrendlinesDialog(QDialog):
         self.p2y_spin.setDecimals(2)
         self.p2y_spin.setRange(-999999, 999999)
 
-        p1_layout = QHBoxLayout()
-        p1_layout.addWidget(QLabel("Bar:"))
-        p1_layout.addWidget(self.p1x_spin)
-        p1_layout.addWidget(QLabel("Y:"))
-        p1_layout.addWidget(self.p1y_spin)
-        edit_layout.addRow("Point 1:", p1_layout)
+        self.coord_label = QLabel()
+        self.coord_row = QWidget()
+        self.coord_layout = QHBoxLayout(self.coord_row)
+        self.coord_layout.setContentsMargins(0, 0, 0, 0)
 
-        p2_layout = QHBoxLayout()
-        p2_layout.addWidget(QLabel("Bar:"))
-        p2_layout.addWidget(self.p2x_spin)
-        p2_layout.addWidget(QLabel("Y:"))
-        p2_layout.addWidget(self.p2y_spin)
-        edit_layout.addRow("Point 2:", p2_layout)
+        self.p1_layout = QHBoxLayout()
+        self.p1_layout.addWidget(QLabel("Bar:"))
+        self.p1_layout.addWidget(self.p1x_spin)
+        self.p1_layout.addWidget(QLabel("Y:"))
+        self.p1_layout.addWidget(self.p1y_spin)
+
+        self.p2_layout = QHBoxLayout()
+        self.p2_layout.addWidget(QLabel("Bar:"))
+        self.p2_layout.addWidget(self.p2x_spin)
+        self.p2_layout.addWidget(QLabel("Y:"))
+        self.p2_layout.addWidget(self.p2y_spin)
+
+        self.coord_layout.addLayout(self.p1_layout)
+        self.coord_layout.addLayout(self.p2_layout)
+
+        self.p1_label = QLabel("Point 1:")
+        self.p2_label = QLabel("Point 2:")
+        edit_layout.addRow(self.p1_label, self.p1_layout)
+        edit_layout.addRow(self.p2_label, self.p2_layout)
 
         apply_btn = QPushButton("Apply Changes")
         apply_btn.clicked.connect(self._apply_changes)
@@ -112,17 +124,26 @@ class EditTrendlinesDialog(QDialog):
             item_num.setFlags(item_num.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(i, 0, item_num)
 
+            dtype = d.get('type', 'trendline')
+            type_item = QTableWidgetItem(DRAWING_TYPE_LABELS.get(dtype, dtype))
+            self.table.setItem(i, 1, type_item)
+
             color_item = QTableWidgetItem(d.get('color', '#FFFFFF'))
             color_item.setBackground(QColor(d.get('color', '#FFFFFF')))
-            self.table.setItem(i, 1, color_item)
+            self.table.setItem(i, 2, color_item)
 
-            snap = d.get('snap', '') or 'None'
-            snap_item = QTableWidgetItem(snap.capitalize() if snap else 'None')
-            self.table.setItem(i, 2, snap_item)
+            pos_str = self._format_position(d)
+            self.table.setItem(i, 3, QTableWidgetItem(pos_str))
 
-            points = d.get('points', [])
-            pts_str = ', '.join(f'({p[0]}, {p[1]:.2f})' for p in points)
-            self.table.setItem(i, 3, QTableWidgetItem(pts_str))
+    def _format_position(self, d):
+        dtype = d.get('type', 'trendline')
+        points = d.get('points', [])
+        if dtype == 'hline' and points:
+            return f"Y: {points[0][1]:.2f}"
+        elif dtype == 'vline' and points:
+            return f"Bar: {int(points[0][0])}"
+        else:
+            return ', '.join(f'({p[0]}, {p[1]:.2f})' for p in points)
 
     def _on_selection_changed(self, row, col, prev_row, prev_col):
         self._load_selected(row, col)
@@ -136,22 +157,44 @@ class EditTrendlinesDialog(QDialog):
         self._current_row = row
 
         snap = d.get('snap', '')
-        snap_map = {'': 0, 'open': 1, 'high': 2, 'low': 3, 'close': 4}
-        self.snap_combo.setCurrentIndex(snap_map.get(snap, 0))
+        self.snap_combo.setCurrentIndex(SNAP_VALUES.get(snap, 0))
 
+        dtype = d.get('type', 'trendline')
         points = d.get('points', [])
-        if len(points) >= 2:
-            self.p1x_spin.setValue(points[0][0])
-            self.p1y_spin.setValue(points[0][1])
-            self.p2x_spin.setValue(points[1][0])
-            self.p2y_spin.setValue(points[1][1])
+
+        if dtype == 'hline':
+            self.p1_label.setText("Y:")
+            self.p1x_spin.setVisible(False)
+            self.p1y_spin.setValue(points[0][1] if points else 0)
+            self.p2_label.setVisible(False)
+            self.p2x_spin.setVisible(False)
+            self.p2y_spin.setVisible(False)
+        elif dtype == 'vline':
+            self.p1_label.setText("Bar:")
+            self.p1y_spin.setVisible(False)
+            self.p1x_spin.setValue(points[0][0] if points else 0)
+            self.p2_label.setVisible(False)
+            self.p2x_spin.setVisible(False)
+            self.p2y_spin.setVisible(False)
+        else:
+            self.p1_label.setText("Point 1:")
+            self.p1x_spin.setVisible(True)
+            self.p1y_spin.setVisible(True)
+            self.p2_label.setVisible(True)
+            self.p2x_spin.setVisible(True)
+            self.p2y_spin.setVisible(True)
+            if len(points) >= 2:
+                self.p1x_spin.setValue(points[0][0])
+                self.p1y_spin.setValue(points[0][1])
+                self.p2x_spin.setValue(points[1][0])
+                self.p2y_spin.setValue(points[1][1])
 
     def _choose_color(self):
         row = getattr(self, '_current_row', 0)
         if row >= len(self.drawings):
             return
         current = self.drawings[row].get('color', '#FFFFFF')
-        color = QColorDialog.getColor(QColor(current), self, "Select Trendline Color")
+        color = QColorDialog.getColor(QColor(current), self, "Select Color")
         if color.isValid():
             self.color_label.setStyleSheet(f"background-color: {color.name()}; border: 1px solid white;")
 
@@ -161,11 +204,18 @@ class EditTrendlinesDialog(QDialog):
             return
         d = self.drawings[row]
         d['color'] = self.color_label.palette().color(self.color_label.backgroundRole()).name()
-        d['snap'] = self.snap_value_map.get(self.snap_combo.currentIndex(), '')
-        d['points'] = [
-            (int(self.p1x_spin.value()), self.p1y_spin.value()),
-            (int(self.p2x_spin.value()), self.p2y_spin.value())
-        ]
+        d['snap'] = SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+
+        dtype = d.get('type', 'trendline')
+        if dtype == 'hline':
+            d['points'] = [(0, self.p1y_spin.value())]
+        elif dtype == 'vline':
+            d['points'] = [(int(self.p1x_spin.value()), 0)]
+        else:
+            d['points'] = [
+                (int(self.p1x_spin.value()), self.p1y_spin.value()),
+                (int(self.p2x_spin.value()), self.p2y_spin.value())
+            ]
         self._populate_table()
         self.table.selectRow(row)
 
@@ -191,11 +241,12 @@ class EditTrendlinesDialog(QDialog):
         return self._removed_items
 
 
-class TrendlineSettingsDialog(QDialog):
+class DrawingSettingsDialog(QDialog):
     def __init__(self, drawing, parent=None):
         super().__init__(parent)
         self.drawing = drawing
-        self.setWindowTitle("Trendline Settings")
+        self.drawing_type = drawing.get('type', 'trendline')
+        self.setWindowTitle(f"{DRAWING_TYPE_LABELS.get(self.drawing_type, 'Drawing')} Settings")
         self.setMinimumWidth(300)
         self._color = drawing.get('color', '#FFFFFF')
         self._snap = drawing.get('snap', '')
@@ -220,16 +271,25 @@ class TrendlineSettingsDialog(QDialog):
         
         self.snap_combo = QComboBox()
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
-        snap_map = {'': 0, 'open': 1, 'high': 2, 'low': 3, 'close': 4}
-        self.snap_combo.setCurrentIndex(snap_map.get(self._snap, 0))
+        self.snap_combo.setCurrentIndex(SNAP_VALUES.get(self._snap, 0))
         form.addRow("Snap:", self.snap_combo)
         
         points = self.drawing.get('points', [])
-        if len(points) >= 2:
+        if self.drawing_type == 'hline' and points:
+            form.addRow("Y:", QLabel(f"{points[0][1]:.2f}"))
+        elif self.drawing_type == 'vline' and points:
+            form.addRow("Bar:", QLabel(f"{int(points[0][0])}"))
+        elif len(points) >= 2:
             form.addRow(QLabel("Point 1:"), QLabel(f"Bar: {int(points[0][0])}  Y: {points[0][1]:.2f}"))
             form.addRow(QLabel("Point 2:"), QLabel(f"Bar: {int(points[1][0])}  Y: {points[1][1]:.2f}"))
         
         layout.addLayout(form)
+        
+        remove_btn = QPushButton("Remove")
+        remove_btn.clicked.connect(self._remove)
+        layout.addWidget(remove_btn)
+        
+        self._removed = False
         
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -239,7 +299,7 @@ class TrendlineSettingsDialog(QDialog):
         layout.addWidget(buttons)
     
     def _choose_color(self):
-        color = QColorDialog.getColor(QColor(self._color), self, "Select Trendline Color")
+        color = QColorDialog.getColor(QColor(self._color), self, "Select Color")
         if color.isValid():
             self._color = color.name()
             self.color_label.setStyleSheet(f"background-color: {self._color}; border: 1px solid white;")
@@ -248,5 +308,11 @@ class TrendlineSettingsDialog(QDialog):
         return self._color
     
     def get_snap(self):
-        snap_map = {0: '', 1: 'open', 2: 'high', 3: 'low', 4: 'close'}
-        return snap_map.get(self.snap_combo.currentIndex(), '')
+        return SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+    
+    def _remove(self):
+        self._removed = True
+        self.accept()
+    
+    def is_removed(self):
+        return self._removed

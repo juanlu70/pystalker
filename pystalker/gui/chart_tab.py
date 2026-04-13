@@ -169,12 +169,16 @@ class ChartTabWidget(QTabWidget):
             tab = self.widget(index)
             if tab and not tab.isVisible():
                 tab.show()
+                if tab.chart_view.df is not None and not tab.chart_view.df.empty:
+                    tab.chart_view._apply_default_view()
+                    tab.chart_view.update_date_ticks()
+                    tab.chart_view.adjust_volume_height()
         self.current_changed.emit(index)
     
     def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True) -> ChartTab:
         if symbol in self.tabs:
             tab = self.tabs[symbol]
-            index = indexOf(tab)
+            index = self.indexOf(tab)
             if set_current:
                 self.setCurrentIndex(index)
             return tab
