@@ -98,9 +98,6 @@ class IndicatorManager:
         'MFI': [{'name': 'MFI', 'color': '#9370DB'}],
     }
     
-    def __init__(self):
-        self.indicators: Dict[str, Indicator] = {}
-    
     @staticmethod
     def get_available_indicators() -> Dict[str, dict]:
         return IndicatorManager.ALL_INDICATORS
@@ -209,26 +206,5 @@ class IndicatorManager:
                 indicator.add_line(PlotLine(f'MFI({default_params["period"]})', result, line_colors.get('MFI', '#9370DB')))
             
             return indicator
-        except Exception as e:
-            print(f"Error calculating indicator {name}: {e}")
+        except Exception:
             return None
-    
-    def add_indicator(self, name: str, data: pd.DataFrame, params: Dict = None) -> bool:
-        indicator = self.calculate_indicator(name, data, params)
-        if indicator:
-            self.indicators[name] = indicator
-            return True
-        return False
-    
-    def remove_indicator(self, name: str):
-        if name in self.indicators:
-            del self.indicators[name]
-    
-    def get_indicator(self, name: str) -> Optional[Indicator]:
-        return self.indicators.get(name)
-    
-    def get_all_indicators(self) -> Dict[str, Indicator]:
-        return self.indicators
-
-
-Manager = IndicatorManager

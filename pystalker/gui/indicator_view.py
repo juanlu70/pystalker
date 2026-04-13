@@ -8,11 +8,7 @@ import pandas as pd
 import numpy as np
 
 from ..core.indicators import Indicator
-
-
-class PriceAxisItem(pg.AxisItem):
-    def tickStrings(self, values, scale, spacing):
-        return [f'{v:.2f}' for v in values]
+from .shared import PriceAxisItem
 
 
 class IndicatorPanel(QWidget):

@@ -142,7 +142,7 @@ class IndicatorDialog(QDialog):
             self.param_widgets[param_name] = spinbox
             self.params_layout.addRow(label, spinbox)
         
-        if len(line_defaults) > 1:
+        if len(line_defaults) > 0:
             self.colors_group.setVisible(True)
             for line_def in line_defaults:
                 line_name = line_def['name']
@@ -163,7 +163,6 @@ class IndicatorDialog(QDialog):
                 self.colors_layout.addRow(f"{line_name}:", row_layout)
         else:
             self.colors_group.setVisible(False)
-            self.line_colors.clear()
         
         self.params_group.setVisible(True)
     

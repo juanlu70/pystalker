@@ -2,14 +2,14 @@
 PyStalker - Chart View using PyQtGraph for high performance
 """
 import numpy as np
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMenu, QColorDialog
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QPointF
 from PyQt6.QtGui import QWheelEvent, QMouseEvent, QKeyEvent
 import pyqtgraph as pg
 import pandas as pd
-import numpy as np
 
 from ..core.indicators import PlotLine
+from .shared import PriceAxisItem
 
 
 class OverlayLine:
@@ -17,56 +17,6 @@ class OverlayLine:
         self.plot_line = plot_line
         self.visible = visible
         self.unique_name = unique_name or plot_line.name
-
-
-class IndicatorLegendItem(QWidget):
-    clicked = pyqtSignal()
-    
-    def __init__(self, name, visible=True, color='#FFFFFF', parent=None):
-        super().__init__(parent)
-        self.name = name
-        self.visible = visible
-        self.color = color
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
-        
-        self.visible_btn = QPushButton("👁" if visible else "🚫")
-        self.visible_btn.setFixedSize(30, 25)
-        self.visible_btn.clicked.connect(self.toggle_visibility)
-        layout.addWidget(self.visible_btn)
-        
-        self.color_label = QLabel()
-        self.color_label.setFixedSize(20, 20)
-        self.color_label.setStyleSheet(f"background-color: {color}; border: 1px solid white;")
-        layout.addWidget(self.color_label)
-        
-        self.name_label = QLabel(name)
-        self.name_label.setStyleSheet("color: white;")
-        layout.addWidget(self.name_label)
-        
-        layout.addStretch()
-        
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-    
-    def toggle_visibility(self):
-        self.visible = not self.visible
-        self.visible_btn.setText("👁" if self.visible else "🚫")
-        self.clicked.emit()
-    
-    def set_visible_state(self, visible):
-        self.visible = visible
-        self.visible_btn.setText("👁" if visible else "🚫")
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.toggle_visibility()
-
-
-class PriceAxisItem(pg.AxisItem):
-    def tickStrings(self, values, scale, spacing):
-        return [f'{v:.2f}' for v in values]
 
 
 class TrendLineItem(pg.GraphicsObject):
@@ -141,6 +91,120 @@ class TrendLineItem(pg.GraphicsObject):
         return pg.QtCore.QRectF(self.picture.boundingRect())
 
 
+class HLineItem(pg.GraphicsObject):
+    def __init__(self, y, x_min=0, x_max=1000, color='#FFD700', width=2):
+        pg.GraphicsObject.__init__(self)
+        self.y = y
+        self.x_min = x_min
+        self.x_max = x_max
+        self.color = color
+        self.width = width
+        self.show_endpoints = False
+        self.generatePicture()
+    
+    def setY(self, y):
+        self.y = y
+        self.generatePicture()
+        self.update()
+    
+    def setXRange(self, x_min, x_max):
+        self.x_min = x_min
+        self.x_max = x_max
+        self.generatePicture()
+        self.update()
+    
+    def generatePicture(self):
+        self.picture = pg.QtGui.QPicture()
+        p = pg.QtGui.QPainter(self.picture)
+        pen = pg.mkPen(self.color, width=self.width)
+        p.setPen(pen)
+        p.drawLine(pg.QtCore.QPointF(self.x_min, self.y),
+                   pg.QtCore.QPointF(self.x_max, self.y))
+        p.end()
+    
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+        if not self.show_endpoints:
+            return
+        p.setPen(pg.mkPen(self.color, width=2))
+        p.setBrush(pg.QtGui.QBrush(pg.QtGui.QColor(self.color), Qt.BrushStyle.SolidPattern))
+        vb = None
+        try:
+            if hasattr(self, 'parentItem') and self.parentItem():
+                vb = self.parentItem().getViewBox()
+            else:
+                vb = self.getViewBox()
+        except Exception:
+            pass
+        if vb:
+            pixel_size = vb.viewPixelSize()
+            rx = 6 * pixel_size[0]
+            ry = 6 * pixel_size[1]
+        else:
+            rx = ry = 0.3
+        p.drawEllipse(pg.QtCore.QPointF((self.x_min + self.x_max) / 2, self.y), rx, ry)
+    
+    def boundingRect(self):
+        return pg.QtCore.QRectF(self.picture.boundingRect())
+
+
+class VLineItem(pg.GraphicsObject):
+    def __init__(self, x, y_min=-1e6, y_max=1e6, color='#FFD700', width=2):
+        pg.GraphicsObject.__init__(self)
+        self.x = x
+        self.y_min = y_min
+        self.y_max = y_max
+        self.color = color
+        self.width = width
+        self.show_endpoints = False
+        self.generatePicture()
+    
+    def setX(self, x):
+        self.x = x
+        self.generatePicture()
+        self.update()
+    
+    def setYRange(self, y_min, y_max):
+        self.y_min = y_min
+        self.y_max = y_max
+        self.generatePicture()
+        self.update()
+    
+    def generatePicture(self):
+        self.picture = pg.QtGui.QPicture()
+        p = pg.QtGui.QPainter(self.picture)
+        pen = pg.mkPen(self.color, width=self.width)
+        p.setPen(pen)
+        p.drawLine(pg.QtCore.QPointF(self.x, self.y_min),
+                   pg.QtCore.QPointF(self.x, self.y_max))
+        p.end()
+    
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+        if not self.show_endpoints:
+            return
+        p.setPen(pg.mkPen(self.color, width=2))
+        p.setBrush(pg.QtGui.QBrush(pg.QtGui.QColor(self.color), Qt.BrushStyle.SolidPattern))
+        vb = None
+        try:
+            if hasattr(self, 'parentItem') and self.parentItem():
+                vb = self.parentItem().getViewBox()
+            else:
+                vb = self.getViewBox()
+        except Exception:
+            pass
+        if vb:
+            pixel_size = vb.viewPixelSize()
+            rx = 6 * pixel_size[0]
+            ry = 6 * pixel_size[1]
+        else:
+            rx = ry = 0.3
+        p.drawEllipse(pg.QtCore.QPointF(self.x, (self.y_min + self.y_max) / 2), rx, ry)
+    
+    def boundingRect(self):
+        return pg.QtCore.QRectF(self.picture.boundingRect())
+
+
 class ChartView(QWidget):
     indicator_added = pyqtSignal(str)
     indicator_visibility_changed = pyqtSignal(str, bool)
@@ -157,6 +221,8 @@ class ChartView(QWidget):
         self.indicator_curves = []
         self.drawings = []
         self.drawing_trendline = False
+        self._drawing_type = 'trendline'
+        self._needs_view_reset = False
         self.trendline_points = []
         self.snap_mode = None
         self.preview_line = None
@@ -221,13 +287,44 @@ class ChartView(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
     
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._needs_view_reset and self.df is not None and not self.df.empty:
+            self._needs_view_reset = False
+            self._apply_default_view()
+            self.update_date_ticks()
+            self.adjust_volume_height()
+    
     def start_trendline_drawing(self):
         if not self._draw_mode:
             return
+        self._drawing_type = 'trendline'
         self.drawing_trendline = True
         self.trendline_points = []
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.info_text.setText("Trendline: Click first point (Press ESC to cancel)")
+        self.update_info_position()
+    
+    def start_hline_drawing(self):
+        if not self._draw_mode:
+            self.draw_mode = True
+            self.drawModeToggled.emit(True)
+        self._drawing_type = 'hline'
+        self.drawing_trendline = True
+        self.trendline_points = []
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.info_text.setText("HLine: Click to place horizontal line (Press ESC to cancel)")
+        self.update_info_position()
+    
+    def start_vline_drawing(self):
+        if not self._draw_mode:
+            self.draw_mode = True
+            self.drawModeToggled.emit(True)
+        self._drawing_type = 'vline'
+        self.drawing_trendline = True
+        self.trendline_points = []
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.info_text.setText("VLine: Click to place vertical line (Press ESC to cancel)")
         self.update_info_position()
     
     def keyPressEvent(self, event: QKeyEvent):
@@ -274,8 +371,6 @@ class ChartView(QWidget):
         if self._ignore_context_menu:
             return
         
-        from PyQt6.QtWidgets import QMenu, QColorDialog
-        
         menu = QMenu(self)
         
         change_bull_color = menu.addAction("Change Bull Color")
@@ -291,8 +386,6 @@ class ChartView(QWidget):
                 self.bull_color = color.name()
                 self.plot_candlesticks(self.df, self.symbol)
                 self.colors_changed.emit()
-            # Reset flag after a short delay to prevent re-triggering
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
         elif action == change_bear_color:
             menu.close()
@@ -302,43 +395,49 @@ class ChartView(QWidget):
                 self.bear_color = color.name()
                 self.plot_candlesticks(self.df, self.symbol)
                 self.colors_changed.emit()
-            # Reset flag after a short delay to prevent re-triggering
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
-        elif action == change_bear_color:
-            menu.close()  # Close menu before opening dialog
-            color = QColorDialog.getColor(pg.QtGui.QColor(self.bear_color), self, "Select Bear Color")
-            if color.isValid():
-                self.bear_color = color.name()
-                self.plot_candlesticks(self.df, self.symbol)
-                self.colors_changed.emit()
     
     def set_colors(self, bull_color: str, bear_color: str):
         self.bull_color = bull_color
         self.bear_color = bear_color
     
+    def _snap_y(self, x, y, snap_mode=None):
+        if self.df is None or not snap_mode:
+            return x, y
+        x_idx = int(round(x))
+        column_map = {'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}
+        col = column_map.get(snap_mode)
+        if col and 0 <= x_idx < len(self.df):
+            y = float(self.df[col].iloc[x_idx])
+            x = x_idx
+        return x, y
+
     def snap_drawing_points(self, drawing):
         if self.df is None or self.df.empty:
             return
-        snap = drawing.get('snap', '')
+        snap = drawing.get('snap', '') or self.snap_mode
         if not snap:
-            snap = self.snap_mode
-        column_map = {'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}
-        col = column_map.get(snap)
-        if not col:
             return
-        new_points = []
-        for px, py in drawing['points']:
-            x_idx = int(round(px))
-            if 0 <= x_idx < len(self.df):
-                y = float(self.df[col].iloc[x_idx])
-                new_points.append((x_idx, y))
-            else:
-                new_points.append((px, py))
-        drawing['points'] = new_points
-        drawing['item'].points = new_points
-        drawing['item'].generatePicture()
-        drawing['item'].update()
+        drawing_type = drawing.get('type', 'trendline')
+        if drawing_type == 'hline':
+            _, y = drawing['points'][0]
+            x_idx = 0
+            sx, sy = self._snap_y(x_idx, y, snap)
+            drawing['points'] = [(0, sy)]
+            drawing['item'].y = sy
+            drawing['item'].generatePicture()
+            drawing['item'].update()
+        elif drawing_type == 'vline':
+            drawing['points'] = [(drawing['points'][0][0], 0)]
+        else:
+            new_points = []
+            for px, py in drawing['points']:
+                sx, sy = self._snap_y(px, py, snap)
+                new_points.append((sx, sy))
+            drawing['points'] = new_points
+            drawing['item'].points = new_points
+            drawing['item'].generatePicture()
+            drawing['item'].update()
     
     @property
     def draw_mode(self):
@@ -350,7 +449,7 @@ class ChartView(QWidget):
         self._show_endpoints = enabled
         if enabled:
             self.plot_widget.setMouseEnabled(x=False, y=False)
-            self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
+            self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
             self.update_info_position()
         else:
             self.releaseMouse()
@@ -367,6 +466,18 @@ class ChartView(QWidget):
             if 'item' in drawing:
                 drawing['item'].show_endpoints = enabled
                 drawing['item'].update()
+                drawing_type = drawing.get('type', 'trendline')
+                if drawing_type == 'hline':
+                    x_min = -10
+                    x_max = len(self.df) + 10 if self.df is not None else 1000
+                    drawing['item'].setXRange(x_min, x_max)
+                elif drawing_type == 'vline':
+                    view_range = self.view_box.viewRange()
+                    drawing['item'].setYRange(view_range[1][0] - 100, view_range[1][1] + 100)
+                elif drawing_type == 'trendline':
+                    x_min = -10
+                    x_max = len(self.df) + 10 if self.df is not None else 1000
+                    drawing['item'].setXRange(x_min, x_max)
     
     def cancel_trendline(self):
         self.drawing_trendline = False
@@ -375,7 +486,7 @@ class ChartView(QWidget):
             self.plot_widget.removeItem(self.preview_line)
             self.preview_line = None
         if self._draw_mode:
-            self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
+            self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
             self.update_info_position()
         else:
             self.plot_widget.setMouseEnabled(x=True, y=True)
@@ -385,7 +496,7 @@ class ChartView(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             if self._draw_mode:
                 if self.drawing_trendline:
-                    self.handle_trendline_click(event)
+                    self.handle_drawing_click(event)
                     event.accept()
                     return
                 hit = self._hit_test_drawing_endpoint(event)
@@ -407,11 +518,16 @@ class ChartView(QWidget):
                     self.grabMouse()
                     event.accept()
                     return
-                self.handle_trendline_click(event)
+                if self.drawing_trendline:
+                    self.handle_drawing_click(event)
+                    event.accept()
+                    return
+                self.draw_mode = False
+                self.drawModeToggled.emit(False)
                 event.accept()
                 return
             elif self.drawing_trendline:
-                self.handle_trendline_click(event)
+                self.handle_drawing_click(event)
                 event.accept()
                 return
             else:
@@ -457,17 +573,17 @@ class ChartView(QWidget):
     
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._dragging_drawing is not None and self._draw_mode:
-            self._handle_trendline_drag(event)
+            self._handle_drawing_drag(event)
             return
         if self.drawing_trendline and len(self.trendline_points) == 1:
-            self.handle_trendline_move(event)
+            self.handle_drawing_move(event)
         super().mouseMoveEvent(event)
     
     def _get_next_drawing_color(self):
         return '#FFFFFF'
     
     def _hit_test_drawing_endpoint(self, event):
-        from PyQt6.QtCore import QPointF
+
         pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
         mx, my = pos.x(), pos.y()
         view_range = self.view_box.viewRange()
@@ -487,7 +603,6 @@ class ChartView(QWidget):
         return None
     
     def _hit_test_drawing_line(self, event):
-        from PyQt6.QtCore import QPointF
         pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
         mx, my = pos.x(), pos.y()
         view_range = self.view_box.viewRange()
@@ -499,67 +614,109 @@ class ChartView(QWidget):
         threshold_x = (x_range / view_w) * 4 if view_w > 0 else 1
         
         for drawing in self.drawings:
-            if 'item' not in drawing or len(drawing.get('points', [])) < 2:
+            if 'item' not in drawing:
                 continue
-            p1 = drawing['points'][0]
-            p2 = drawing['points'][1]
-            x1, y1 = p1
-            x2, y2 = p2
-            dx = x2 - x1
-            dy = y2 - y1
-            length_sq = dx * dx + dy * dy
-            if length_sq == 0:
-                continue
-            t = ((mx - x1) * dx + (my - y1) * dy) / length_sq
-            t = max(0, t)
-            proj_y = y1 + t * dy
-            dist_x = abs(mx - (x1 + t * dx))
-            dist_y = abs(my - proj_y)
-            if dist_y < threshold_y and dist_x < threshold_x * 3:
-                return drawing
+            drawing_type = drawing.get('type', 'trendline')
+            if drawing_type == 'hline':
+                hy = drawing['points'][0][1] if drawing.get('points') else None
+                if hy is not None and abs(my - hy) < threshold_y:
+                    return drawing
+            elif drawing_type == 'vline':
+                vx = drawing['points'][0][0] if drawing.get('points') else None
+                if vx is not None and abs(mx - vx) < threshold_x:
+                    return drawing
+            else:
+                if len(drawing.get('points', [])) < 2:
+                    continue
+                p1 = drawing['points'][0]
+                p2 = drawing['points'][1]
+                x1, y1 = p1
+                x2, y2 = p2
+                dx = x2 - x1
+                dy = y2 - y1
+                length_sq = dx * dx + dy * dy
+                if length_sq == 0:
+                    continue
+                t = ((mx - x1) * dx + (my - y1) * dy) / length_sq
+                t = max(0, t)
+                proj_y = y1 + t * dy
+                dist_x = abs(mx - (x1 + t * dx))
+                dist_y = abs(my - proj_y)
+                if dist_y < threshold_y and dist_x < threshold_x * 3:
+                    return drawing
         return None
     
-    def _handle_trendline_drag(self, event):
-        from PyQt6.QtCore import QPointF
+    def _handle_drawing_drag(self, event):
         pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
-        x = pos.x()
-        y = pos.y()
-        x_idx = int(round(x))
+        x, y = pos.x(), pos.y()
         snap = self._dragging_drawing.get('snap', '') or self.snap_mode
-        if self.df is not None and 0 <= x_idx < len(self.df):
-            if snap == 'open':
-                y = float(self.df['Open'].iloc[x_idx])
-            elif snap == 'high':
-                y = float(self.df['High'].iloc[x_idx])
-            elif snap == 'low':
-                y = float(self.df['Low'].iloc[x_idx])
-            elif snap == 'close':
-                y = float(self.df['Close'].iloc[x_idx])
-        self._dragging_drawing['points'][self._dragging_point_idx] = (x_idx, y)
-        self._dragging_drawing['item'].update_point(self._dragging_point_idx, x_idx, y)
-        self.plot_widget.update()
-    
-    def handle_trendline_click(self, event):
-        from PyQt6.QtCore import QPointF
-        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
-        x = pos.x()
-        y = pos.y()
+        drawing_type = self._dragging_drawing.get('type', 'trendline')
         
+        if drawing_type == 'hline':
+            x, y = self._snap_y(x, y, snap)
+            self._dragging_drawing['item'].setY(y)
+            self._dragging_drawing['points'] = [(0, y)]
+            self.plot_widget.update()
+        elif drawing_type == 'vline':
+            x_idx = int(round(x))
+            self._dragging_drawing['item'].setX(x_idx)
+            self._dragging_drawing['points'] = [(x_idx, 0)]
+            self.plot_widget.update()
+        else:
+            x, y = self._snap_y(x, y, snap)
+            self._dragging_drawing['points'][self._dragging_point_idx] = (int(round(x)), y)
+            self._dragging_drawing['item'].update_point(self._dragging_point_idx, int(round(x)), y)
+            self.plot_widget.update()
+    
+    def handle_drawing_click(self, event):
+        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
+        x, y = self._snap_y(pos.x(), pos.y(), self.snap_mode)
         x_idx = int(round(x))
-        if self.df is not None and 0 <= x_idx < len(self.df):
-            if self.snap_mode == 'open':
-                y = float(self.df['Open'].iloc[x_idx])
-            elif self.snap_mode == 'high':
-                y = float(self.df['High'].iloc[x_idx])
-            elif self.snap_mode == 'low':
-                y = float(self.df['Low'].iloc[x_idx])
-            elif self.snap_mode == 'close':
-                y = float(self.df['Close'].iloc[x_idx])
+        
+        if self._drawing_type == 'hline':
+            color = self._get_next_drawing_color()
+            x_min = -10
+            x_max = len(self.df) + 10 if self.df is not None else 1000
+            item = HLineItem(y, x_min, x_max, color, 2)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': 'hline',
+                'item': item,
+                'points': [(0, y)],
+                'color': color,
+                'snap': self.snap_mode or '',
+                'params': {}
+            })
+            self.snap_drawing_points(self.drawings[-1])
+            self.drawing_trendline = False
+            self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
+            self.update_info_position()
+            return
+        
+        if self._drawing_type == 'vline':
+            color = self._get_next_drawing_color()
+            y_min = -1e6
+            y_max = 1e6
+            item = VLineItem(x_idx, y_min, y_max, color, 2)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': 'vline',
+                'item': item,
+                'points': [(x_idx, 0)],
+                'color': color,
+                'snap': '',
+                'params': {}
+            })
+            self.drawing_trendline = False
+            self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
+            self.update_info_position()
+            return
         
         self.trendline_points.append((x_idx, y))
         
         if len(self.trendline_points) == 1:
-            print(f"[DEBUG] Point 1 set: bar={x_idx}, y={y:.2f}", flush=True)
             if self._draw_mode:
                 self.info_text.setText(f"[P1] bar={x_idx} y={y:.2f} | Click to set end point")
             else:
@@ -567,7 +724,6 @@ class ChartView(QWidget):
             self.update_info_position()
         elif len(self.trendline_points) == 2:
             p1 = self.trendline_points[0]
-            print(f"[DEBUG] Point 2 set: bar={x_idx}, y={y:.2f} | Line from ({p1[0]},{p1[1]:.2f}) to ({x_idx},{y:.2f})", flush=True)
             if self.preview_line is not None:
                 self.plot_widget.removeItem(self.preview_line)
                 self.preview_line = None
@@ -591,27 +747,18 @@ class ChartView(QWidget):
             self.trendline_points = []
             self.drawing_trendline = False
             if self._draw_mode:
-                self.info_text.setText("DRAW MODE - Left click: start/end trendline | ESC: exit")
+                self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
             else:
                 self.plot_widget.setMouseEnabled(x=True, y=True)
                 self.info_text.setText("Trendline drawn. Press T to draw another.")
     
-    def handle_trendline_move(self, event):
-        from PyQt6.QtCore import QPointF
-        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
-        x = pos.x()
-        y = pos.y()
+    def handle_drawing_move(self, event):
+        if self._drawing_type != 'trendline' or len(self.trendline_points) != 1:
+            return
         
+        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
+        x, y = self._snap_y(pos.x(), pos.y(), self.snap_mode)
         x_idx = int(round(x))
-        if self.df is not None and 0 <= x_idx < len(self.df):
-            if self.snap_mode == 'open':
-                y = float(self.df['Open'].iloc[x_idx])
-            elif self.snap_mode == 'high':
-                y = float(self.df['High'].iloc[x_idx])
-            elif self.snap_mode == 'low':
-                y = float(self.df['Low'].iloc[x_idx])
-            elif self.snap_mode == 'close':
-                y = float(self.df['Close'].iloc[x_idx])
         
         if self.preview_line is not None:
             self.plot_widget.removeItem(self.preview_line)
@@ -696,9 +843,7 @@ class ChartView(QWidget):
     
     def reset_zoom(self):
         if self.df is not None and len(self.df) > 0:
-            start_idx = max(0, len(self.df) - self.visible_bars)
-            self.plot_widget.setXRange(start_idx, len(self.df))
-            self.plot_widget.autoRange()
+            self._apply_default_view()
     
     def show_last_year(self):
         if self.df is not None and len(self.df) > 0:
@@ -719,12 +864,21 @@ class ChartView(QWidget):
         self.volume_item = None
         self.indicator_curves.clear()
         
-        # Re-add axis and text items that were cleared
         price_axis = PriceAxisItem(orientation='right')
         price_axis.setStyle(showValues=True)
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
         self.view_box = self.plot_widget.plotItem.vb
+        
+        try:
+            self.view_box.sigXRangeChanged.disconnect(self.update_date_ticks)
+            self.view_box.sigYRangeChanged.disconnect(self.update_info_position)
+            self.view_box.sigXRangeChanged.disconnect(self.adjust_volume_height)
+            self.view_box.sigYRangeChanged.disconnect(self.adjust_volume_height)
+            self.view_box.sigXRangeChanged.disconnect(self.update_ohlc_legend_position)
+        except TypeError:
+            pass
+        
         self.view_box.sigXRangeChanged.connect(self.update_date_ticks)
         self.view_box.sigYRangeChanged.connect(self.update_info_position)
         self.view_box.sigXRangeChanged.connect(self.adjust_volume_height)
@@ -733,6 +887,9 @@ class ChartView(QWidget):
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
         self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
                                            rateLimit=60, slot=self.mouse_moved)
+        
+        if self.plot_widget.plotItem.legend is not None:
+            self.plot_widget.plotItem.legend = None
         
         if df is None or df.empty:
             self.info_text.setText("")
@@ -773,10 +930,12 @@ class ChartView(QWidget):
         
         for overlay_line in self.overlay_lines:
             plot_line = overlay_line.plot_line
-            if len(plot_line.data) == len(df):
-                valid_mask = ~np.isnan(plot_line.data)
+            n = min(len(plot_line.data), len(df))
+            if n > 0:
+                data = plot_line.data[:n]
+                valid_mask = ~np.isnan(data)
                 valid_indices = np.where(valid_mask)[0]
-                valid_data = plot_line.data[valid_mask]
+                valid_data = data[valid_mask]
                 
                 if len(valid_indices) > 0:
                     curve = pg.PlotDataItem(valid_indices, valid_data,
@@ -786,14 +945,14 @@ class ChartView(QWidget):
                     self.plot_widget.addItem(curve)
                     self.indicator_curves.append(curve)
         
-        start_idx = max(0, len(df) - self.visible_bars)
-        self.plot_widget.setXRange(start_idx, len(df))
-        self.update_date_ticks()
-        self.update_info_position()
-        
-        self.set_initial_y_range()
-        
-        self.adjust_volume_height()
+        if self.isVisible():
+            self.show_last_year()
+            self.set_initial_y_range()
+            self.update_date_ticks()
+            self.update_info_position()
+            self.adjust_volume_height()
+        else:
+            self._needs_view_reset = True
         
         for drawing in self.drawings:
             if 'item' in drawing:
@@ -898,8 +1057,16 @@ class ChartView(QWidget):
         if self.df is None or len(self.df) == 0:
             return
         
-        start_idx = max(0, len(self.df) - self.visible_bars)
-        visible_df = self.df.iloc[start_idx:]
+        view_range = self.view_box.viewRange()
+        x_min = max(0, int(view_range[0][0]))
+        x_max = min(len(self.df) - 1, int(view_range[0][1]))
+        
+        if x_max <= x_min:
+            start_idx = max(0, len(self.df) - self.visible_bars)
+            x_min = start_idx
+            x_max = len(self.df) - 1
+        
+        visible_df = self.df.iloc[x_min:x_max + 1]
         
         if visible_df.empty:
             return
@@ -961,29 +1128,34 @@ class ChartView(QWidget):
         }
     
     def set_view_state(self, state):
-        if state and self.df is not None:
+        if self.df is None or len(self.df) == 0:
+            return
+        
+        if state:
             x_range = state.get('x_range')
             y_range = state.get('y_range')
             data_len = len(self.df)
             
-            if x_range:
+            try:
                 x_min, x_max = x_range
-                
-                if x_min >= -data_len * 0.1 and x_max <= data_len * 1.1:
+                if (x_min is not None and x_max is not None and
+                    isinstance(x_min, (int, float)) and isinstance(x_max, (int, float)) and
+                    x_max > x_min and (x_max - x_min) < data_len * 2):
                     self.plot_widget.setXRange(x_min, x_max)
                 else:
                     self._apply_default_view()
-            else:
+            except (TypeError, ValueError):
                 self._apply_default_view()
             
-            if y_range and y_range[0] != y_range[1]:
-                view_width = x_range[1] - x_range[0] if x_range else data_len
-                data_width = data_len
-                if view_width > data_width * 2:
-                    self._apply_default_view()
+            try:
+                y_min, y_max = y_range
+                if (y_min is not None and y_max is not None and
+                    isinstance(y_min, (int, float)) and isinstance(y_max, (int, float)) and
+                    y_max > y_min):
+                    self.plot_widget.setYRange(y_min, y_max, padding=0)
                 else:
-                    self.plot_widget.setYRange(y_range[0], y_range[1], padding=0)
-            else:
+                    self.set_initial_y_range()
+            except (TypeError, ValueError):
                 self.set_initial_y_range()
         else:
             self._apply_default_view()
@@ -1007,22 +1179,57 @@ class ChartView(QWidget):
     
     def restore_drawings(self, drawings_data):
         for d in drawings_data:
-            points = [tuple(p) for p in d.get('points', [])]
-            if len(points) < 2:
-                continue
+            drawing_type = d.get('type', 'trendline')
             color = d.get('color', '#FFD700')
-            x_min = -10
-            x_max = len(self.df) + 10 if self.df is not None else 1000
-            item = TrendLineItem(points, x_min, x_max, color, 2)
-            self.plot_widget.addItem(item)
-            self.drawings.append({
-                'type': d.get('type', 'trendline'),
-                'item': item,
-                'points': points,
-                'color': color,
-                'snap': d.get('snap', ''),
-                'params': d.get('params', {})
-            })
+            
+            if drawing_type == 'hline':
+                points = [tuple(p) for p in d.get('points', [])]
+                if not points:
+                    continue
+                y = points[0][1]
+                x_min = -10
+                x_max = len(self.df) + 10 if self.df is not None else 1000
+                item = HLineItem(y, x_min, x_max, color, 2)
+                self.plot_widget.addItem(item)
+                self.drawings.append({
+                    'type': 'hline',
+                    'item': item,
+                    'points': [(0, y)],
+                    'color': color,
+                    'snap': d.get('snap', ''),
+                    'params': d.get('params', {})
+                })
+            elif drawing_type == 'vline':
+                points = [tuple(p) for p in d.get('points', [])]
+                if not points:
+                    continue
+                x = points[0][0]
+                item = VLineItem(x, -1e6, 1e6, color, 2)
+                self.plot_widget.addItem(item)
+                self.drawings.append({
+                    'type': 'vline',
+                    'item': item,
+                    'points': [(x, 0)],
+                    'color': color,
+                    'snap': d.get('snap', ''),
+                    'params': d.get('params', {})
+                })
+            else:
+                points = [tuple(p) for p in d.get('points', [])]
+                if len(points) < 2:
+                    continue
+                x_min = -10
+                x_max = len(self.df) + 10 if self.df is not None else 1000
+                item = TrendLineItem(points, x_min, x_max, color, 2)
+                self.plot_widget.addItem(item)
+                self.drawings.append({
+                    'type': 'trendline',
+                    'item': item,
+                    'points': points,
+                    'color': color,
+                    'snap': d.get('snap', ''),
+                    'params': d.get('params', {})
+                })
         for drawing in self.drawings:
             self.snap_drawing_points(drawing)
 
