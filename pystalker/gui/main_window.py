@@ -765,6 +765,9 @@ class PyStalkerWindow(QMainWindow):
     def on_draw_trendline(self):
         tab = self.chart_tabs.get_current_tab()
         if tab:
+            if not tab.chart_view.draw_mode:
+                tab.chart_view.draw_mode = True
+                self.draw_mode_action.setChecked(True)
             tab.chart_view.start_trendline_drawing()
             tab.chart_view.setFocus()
     

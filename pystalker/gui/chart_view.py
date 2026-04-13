@@ -407,8 +407,7 @@ class ChartView(QWidget):
                     self.grabMouse()
                     event.accept()
                     return
-                self.draw_mode = False
-                self.drawModeToggled.emit(False)
+                self.handle_trendline_click(event)
                 event.accept()
                 return
             elif self.drawing_trendline:
