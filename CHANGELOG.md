@@ -48,5 +48,7 @@
 - Added Draw Horizontal Line and Draw Vertical Line menu items under Draw menu.
 - Renamed "Edit Trendlines" to "Edit Drawings" and "Clear Trendlines" to "Clear Drawings" to reflect all drawing types.
 - Drawing settings dialog now shows appropriate fields per drawing type (Y for hline, Bar for vline, 2 points for trendline).
+- Added limit lines (dashed horizontal lines) for cyclic indicators (RSI, CCI, STOCH, STOCHRSI, WILLR, MFI) with configurable levels and colors.
+- Limit lines can be customized in the Add Indicator dialog with level spinboxes and color pickers.
 
 

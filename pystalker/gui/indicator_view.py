@@ -2,7 +2,7 @@
 PyStalker - Indicator View using PyQtGraph for separate indicator panels
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 import pyqtgraph as pg
 import pandas as pd
 import numpy as np
@@ -60,6 +60,12 @@ class IndicatorPanel(QWidget):
         price_axis.setStyle(showValues=True)
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
+        
+        for hl in self.indicator.hlines:
+            level = hl.get('level', 0)
+            color = hl.get('color', '#FF6B6B')
+            line = pg.InfiniteLine(pos=level, angle=0, pen=pg.mkPen(color=color, width=1, style=Qt.PenStyle.DashLine))
+            self.plot_widget.addItem(line)
         
         for line in self.indicator.lines:
             if len(line.data) == len(self.data):
