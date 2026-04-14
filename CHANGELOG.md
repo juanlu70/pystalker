@@ -46,9 +46,18 @@
 - Fixed "Update All" to recalculate overlay indicators with new data instead of using stale PlotLine arrays.
 - Added Horizontal Line and Vertical Line drawings (single click to place, drag to move constrained to one axis).
 - Added Draw Horizontal Line and Draw Vertical Line menu items under Draw menu.
+
+2026-04-14
+
 - Renamed "Edit Trendlines" to "Edit Drawings" and "Clear Trendlines" to "Clear Drawings" to reflect all drawing types.
 - Drawing settings dialog now shows appropriate fields per drawing type (Y for hline, Bar for vline, 2 points for trendline).
 - Added limit lines (dashed horizontal lines) for cyclic indicators (RSI, CCI, STOCH, STOCHRSI, WILLR, MFI) with configurable levels and colors.
 - Limit lines can be customized in the Add Indicator dialog with level spinboxes and color pickers.
+- Each indicator panel now has its own movable splitter handle — can independently resize chart and each indicator.
+- Splitter sizes are saved and restored per symbol from the database.
+- Fixed vertical grid alignment between main chart and indicator panels — setXLink syncs X ranges, fixed-width left (45px) and right (65px) axes on all panels ensure identical plot area widths.
+- Indicator title moved to upper-left overlay text (no longer takes space from the plot area).
+- Indicator values legend moved to upper-right to avoid overlapping the title.
+
 
 

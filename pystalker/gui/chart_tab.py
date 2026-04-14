@@ -15,20 +15,14 @@ class ChartTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
         
         self.chart_view = ChartView()
         self.splitter.addWidget(self.chart_view)
         
-        self.indicator_view = IndicatorView()
-        self.splitter.addWidget(self.indicator_view)
-        
-        self.splitter.setSizes([800, 0])
-        self.indicator_view.hide()
-        
         layout.addWidget(self.splitter)
         
         self.chart_view.range_changed.connect(self.on_chart_range_changed)
-        self.indicator_view.range_changed.connect(self.on_indicator_range_changed)
         self.chart_view.colors_changed.connect(self.on_colors_changed)
         self.chart_view.indicator_visibility_changed.connect(self.on_indicator_visibility_changed)
         
@@ -37,6 +31,8 @@ class ChartTab(QWidget):
         self.df = None
         self.indicators = []
         self._updating = False
+        self._indicator_panels = {}
+        self._indicator_connected = False
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -52,9 +48,10 @@ class ChartTab(QWidget):
         if self._updating:
             return
         self._updating = True
-        self.indicator_view.update_views(left, right)
-        if ticks:
-            self.indicator_view.update_ticks(ticks)
+        for panel in self._indicator_panels.values():
+            panel.update_view(left, right)
+            if ticks:
+                panel.update_ticks(ticks)
         self._updating = False
     
     def on_indicator_range_changed(self, left, right, ticks):
@@ -62,7 +59,32 @@ class ChartTab(QWidget):
             return
         self._updating = True
         self.chart_view.update_view_range(left, right)
+        for panel in self._indicator_panels.values():
+            panel.update_view(left, right)
+            if ticks:
+                panel.update_ticks(ticks)
         self._updating = False
+    
+    def add_indicator_panel(self, indicator, df):
+        from .indicator_view import IndicatorPanel
+        panel = IndicatorPanel(indicator, df)
+        panel.range_changed.connect(self.on_indicator_range_changed)
+        self._indicator_panels[indicator.name] = panel
+        self.splitter.addWidget(panel)
+        self._distribute_splitter_sizes()
+    
+    def remove_indicator_panel(self, name):
+        if name in self._indicator_panels:
+            panel = self._indicator_panels[name]
+            panel.range_changed.disconnect(self.on_indicator_range_changed)
+            panel.setParent(None)
+            panel.deleteLater()
+            del self._indicator_panels[name]
+            self._distribute_splitter_sizes()
+    
+    def clear_indicator_panels(self):
+        for name in list(self._indicator_panels.keys()):
+            self.remove_indicator_panel(name)
     
     def add_indicator(self, name, indicator_type, params):
         unique_name = self._generate_unique_name(name)
@@ -97,22 +119,28 @@ class ChartTab(QWidget):
     def clear_indicators(self):
         self.indicators.clear()
         self.chart_view.clear_indicators()
-        self.indicator_view.clear_all()
+        self.clear_indicator_panels()
         self._update_splitter_visibility()
     
+    def _distribute_splitter_sizes(self):
+        n_panels = len(self._indicator_panels)
+        total_height = self.splitter.height()
+        if total_height == 0:
+            total_height = 800
+        if n_panels == 0:
+            self.splitter.setSizes([total_height])
+        else:
+            chart_portion = 0.65
+            indicator_portion = (1.0 - chart_portion) / n_panels
+            chart_h = int(total_height * chart_portion)
+            panel_h = int(total_height * indicator_portion)
+            sizes = [chart_h] + [panel_h] * n_panels
+            self.splitter.setSizes(sizes)
+    
     def _update_splitter_visibility(self):
-        # Only show indicator panel if there are non-overlay (separate) indicators
         separate_indicators = [ind for ind in self.indicators if ind.get('type') != 'overlay']
-        
         if len(separate_indicators) == 0:
-            self.indicator_view.hide()
-            self.splitter.setSizes([self.splitter.height(), 0])
-        elif not self.indicator_view.isVisible():
-            self.indicator_view.show()
-            total_height = self.splitter.height()
-            chart_height = int(total_height * 0.75)
-            indicator_height = total_height - chart_height
-            self.splitter.setSizes([chart_height, indicator_height])
+            self.clear_indicator_panels()
     
     def on_colors_changed(self):
         pass
@@ -134,11 +162,13 @@ class ChartTab(QWidget):
     
     def get_view_state(self):
         chart_state = self.chart_view.get_view_state()
-        indicators_state = self.indicator_view.get_panels_state()
-        splitter_state = self.splitter.saveState()
+        panels_state = {}
+        for name, panel in self._indicator_panels.items():
+            panels_state[name] = panel.get_view_state()
+        splitter_state = self.splitter.saveState().data().hex() if self.splitter.saveState().data() else ''
         return {
             'chart': chart_state,
-            'indicators': indicators_state,
+            'indicators': panels_state,
             'splitter': splitter_state
         }
     
@@ -147,9 +177,16 @@ class ChartTab(QWidget):
             if 'chart' in state:
                 self.chart_view.set_view_state(state['chart'])
             if 'indicators' in state:
-                self.indicator_view.set_panels_state(state['indicators'])
-            if 'splitter' in state:
-                self.splitter.restoreState(state['splitter'])
+                for name, panel_state in state.get('indicators', {}).items():
+                    if name in self._indicator_panels:
+                        self._indicator_panels[name].set_view_state(panel_state)
+            if 'splitter' in state and state['splitter']:
+                from PyQt6.QtCore import QByteArray
+                try:
+                    ba = QByteArray.fromHex(bytes.fromhex(state['splitter']))
+                    self.splitter.restoreState(ba)
+                except Exception:
+                    pass
 
 
 class ChartTabWidget(QTabWidget):

@@ -140,9 +140,12 @@ class HLineItem(pg.GraphicsObject):
             pixel_size = vb.viewPixelSize()
             rx = 6 * pixel_size[0]
             ry = 6 * pixel_size[1]
+            view_range = vb.viewRange()
+            visible_x_min = view_range[0][0]
         else:
             rx = ry = 0.3
-        p.drawEllipse(pg.QtCore.QPointF((self.x_min + self.x_max) / 2, self.y), rx, ry)
+            visible_x_min = (self.x_min + self.x_max) / 2
+        p.drawEllipse(pg.QtCore.QPointF(visible_x_min + rx * 2, self.y), rx, ry)
     
     def boundingRect(self):
         return pg.QtCore.QRectF(self.picture.boundingRect())
@@ -508,14 +511,16 @@ class ChartView(QWidget):
                     return
                 hit_line = self._hit_test_drawing_line(event)
                 if hit_line:
-                    self._dragging_drawing = hit_line
+                    drawing_type = hit_line.get('type', 'trendline')
                     hit_endpoint = self._hit_test_drawing_endpoint(event)
                     if hit_endpoint:
                         self._dragging_drawing = hit_endpoint[0]
                         self._dragging_point_idx = hit_endpoint[1]
-                    else:
+                        self.grabMouse()
+                    elif drawing_type != 'trendline':
+                        self._dragging_drawing = hit_line
                         self._dragging_point_idx = 0
-                    self.grabMouse()
+                        self.grabMouse()
                     event.accept()
                     return
                 if self.drawing_trendline:
@@ -542,8 +547,16 @@ class ChartView(QWidget):
                     event.accept()
                     return
                 elif hit_line:
-                    self.draw_mode = True
-                    self.drawModeToggled.emit(True)
+                    drawing_type = hit_line.get('type', 'trendline')
+                    if drawing_type == 'trendline':
+                        self.draw_mode = True
+                        self.drawModeToggled.emit(True)
+                    else:
+                        self.draw_mode = True
+                        self.drawModeToggled.emit(True)
+                        self._dragging_drawing = hit_line
+                        self._dragging_point_idx = 0
+                        self.grabMouse()
                     event.accept()
                     return
         super().mousePressEvent(event)
@@ -575,8 +588,6 @@ class ChartView(QWidget):
         if self._dragging_drawing is not None and self._draw_mode:
             self._handle_drawing_drag(event)
             return
-        if self.drawing_trendline and len(self.trendline_points) == 1:
-            self.handle_drawing_move(event)
         super().mouseMoveEvent(event)
     
     def _get_next_drawing_color(self):
@@ -752,12 +763,11 @@ class ChartView(QWidget):
                 self.plot_widget.setMouseEnabled(x=True, y=True)
                 self.info_text.setText("Trendline drawn. Press T to draw another.")
     
-    def handle_drawing_move(self, event):
+    def _update_preview_line(self, mouse_point):
         if self._drawing_type != 'trendline' or len(self.trendline_points) != 1:
             return
         
-        pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
-        x, y = self._snap_y(pos.x(), pos.y(), self.snap_mode)
+        x, y = self._snap_y(mouse_point.x(), mouse_point.y(), self.snap_mode)
         x_idx = int(round(x))
         
         if self.preview_line is not None:
@@ -771,34 +781,27 @@ class ChartView(QWidget):
     
     def mouse_moved(self, evt):
         pos = evt[0]
+        mouse_point = None
         if self.plot_widget.sceneBoundingRect().contains(pos):
             mouse_point = self.plot_widget.plotItem.vb.mapSceneToView(pos)
             x = mouse_point.x()
             
+            self.mouse_x = x
+            self.mouse_y = mouse_point.y()
+            
             if self.df is not None and len(self.df) > 0:
                 x_idx = int(round(x))
                 if 0 <= x_idx < len(self.df):
-                    row = self.df.iloc[x_idx]
-                    
-                    bar_idx = x_idx
-                    info_parts = []
-                    dt_str = ""
-                    idx = self.df.index[x_idx]
-                    if hasattr(idx, 'strftime'):
-                        try:
-                            dt_str = idx.strftime('%Y-%m-%d %H:%M')
-                        except Exception:
-                            dt_str = str(idx)
-                    info_parts.append(f"{dt_str}  O: {row['Open']:.2f}  H: {row['High']:.2f}  L: {row['Low']:.2f}  C: {row['Close']:.2f}")
-                    for overlay_line in self.overlay_lines:
-                        plot_line = overlay_line.plot_line
-                        if len(plot_line.data) > x_idx:
-                            val = plot_line.data[x_idx]
-                            if not np.isnan(val):
-                                info_parts.append(f"{plot_line.name}: {val:.2f}")
-                    
-                    self.info_text.setText("  ".join(info_parts))
+                    date_str = self.df.index[x_idx]
+                    if hasattr(date_str, 'strftime'):
+                        date_str = date_str.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(date_str)[:10]
+                    self.info_text.setText(f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
                     self.update_info_position()
+        
+        if mouse_point and self.drawing_trendline and len(self.trendline_points) == 1:
+            self._update_preview_line(mouse_point)
     
     def wheelEvent(self, event: QWheelEvent):
         if self.df is None or len(self.df) == 0:

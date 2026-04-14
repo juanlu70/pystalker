@@ -32,7 +32,11 @@ class IndicatorPanel(QWidget):
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.showAxis('right')
         self.plot_widget.hideAxis('left')
-        self.plot_widget.setTitle(indicator.name, color='w', size='10pt')
+        self.plot_widget.setTitle(None)
+        
+        self.title_text = pg.TextItem(indicator.name, color='w', anchor=(0, 0))
+        self.title_text.setFont(pg.QtGui.QFont('sans-serif', 10))
+        self.plot_widget.addItem(self.title_text, ignoreBounds=True)
         
         self.view_box = self.plot_widget.plotItem.vb
         self.view_box.sigXRangeChanged.connect(self.on_range_changed)
@@ -40,13 +44,13 @@ class IndicatorPanel(QWidget):
         
         layout.addWidget(self.plot_widget)
         
-        self.info_text = pg.TextItem("", color='#FFFF00', anchor=(0, 0))
+        self.info_text = pg.TextItem("", color='#FFFF00', anchor=(1, 0))
         self.info_text.setFont(pg.QtGui.QFont('monospace', 9))
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
         
         self.plot_indicator()
         
-        plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
+        self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
                                            rateLimit=60, slot=self.mouse_moved)
     
     def plot_indicator(self):
@@ -60,6 +64,13 @@ class IndicatorPanel(QWidget):
         price_axis.setStyle(showValues=True)
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
+        
+        self.plot_widget.addItem(self.title_text, ignoreBounds=True)
+        self.plot_widget.addItem(self.info_text, ignoreBounds=True)
+        self.update_info_position()
+        
+        self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
+                                           rateLimit=60, slot=self.mouse_moved)
         
         for hl in self.indicator.hlines:
             level = hl.get('level', 0)
@@ -102,7 +113,9 @@ class IndicatorPanel(QWidget):
         x_min, x_max = view_range[0]
         y_min, y_max = view_range[1]
         padding = (y_max - y_min) * 0.05
-        self.info_text.setPos(x_min + 2, y_max - padding)
+        padding_x = (x_max - x_min) * 0.02
+        self.info_text.setPos(x_max - padding_x, y_max - padding)
+        self.title_text.setPos(x_min + 2, y_max - (y_max - y_min) * 0.02)
     
     def on_range_changed(self, view_box):
         view_range = self.view_box.viewRange()

@@ -14,7 +14,6 @@ from PyQt6.QtGui import QAction, QIcon
 
 from .navigator import AssetNavigator
 from .chart_view import ChartView
-from .indicator_view import IndicatorView
 from .chart_tab import ChartTabWidget
 from ..core.data import BarData, ChartAssets
 from ..core.providers import DataManager
@@ -562,7 +561,7 @@ class PyStalkerWindow(QMainWindow):
                         tab.chart_view.add_indicator_line(line, visible=visible, unique_name=ind['name'])
                 else:
                     if visible:
-                        tab.indicator_view.add_indicator_panel(indicator, df)
+                        tab.add_indicator_panel(indicator, df)
         
         if saved_indicators:
             tab.chart_view.plot_candlesticks(df, symbol)
@@ -671,7 +670,7 @@ class PyStalkerWindow(QMainWindow):
                 tab.chart_view.plot_candlesticks(df, tab.symbol)
             else:
                 if visible:
-                    tab.indicator_view.add_indicator_panel(indicator, df)
+                    tab.add_indicator_panel(indicator, df)
         
         self.database.save_chart_indicators(tab.symbol, tab.get_indicators())
     
@@ -704,7 +703,7 @@ class PyStalkerWindow(QMainWindow):
             for line in indicator.lines:
                 tab.chart_view.add_indicator_line(line, visible=True, unique_name=tab.indicators[-1]['name'])
         else:
-            tab.indicator_view.add_indicator_panel(indicator, df)
+            tab.add_indicator_panel(indicator, df)
         
         self.database.save_chart_indicators(tab.symbol, tab.get_indicators())
     
@@ -712,7 +711,7 @@ class PyStalkerWindow(QMainWindow):
         tab = self.chart_tabs.get_current_tab()
         if tab:
             tab.chart_view.clear_indicators()
-            tab.indicator_view.clear_all()
+            tab.clear_indicator_panels()
     
     def zoom_in(self):
         tab = self.chart_tabs.get_current_tab()

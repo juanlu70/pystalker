@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QColorDialog, QComboBox, QDoubleSpinBox, QDialogButtonBox,
-    QHeaderView, QLabel, QGroupBox, QFormLayout, QMessageBox
+    QHeaderView, QLabel, QGroupBox, QFormLayout, QMessageBox, QWidget
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -72,25 +72,22 @@ class EditDrawingsDialog(QDialog):
         self.p2y_spin.setDecimals(2)
         self.p2y_spin.setRange(-999999, 999999)
 
-        self.coord_label = QLabel()
-        self.coord_row = QWidget()
-        self.coord_layout = QHBoxLayout(self.coord_row)
-        self.coord_layout.setContentsMargins(0, 0, 0, 0)
+        self.p1_bar_label = QLabel("Bar:")
+        self.p1_y_label = QLabel("Y:")
+        self.p2_bar_label = QLabel("Bar:")
+        self.p2_y_label = QLabel("Y:")
 
         self.p1_layout = QHBoxLayout()
-        self.p1_layout.addWidget(QLabel("Bar:"))
+        self.p1_layout.addWidget(self.p1_bar_label)
         self.p1_layout.addWidget(self.p1x_spin)
-        self.p1_layout.addWidget(QLabel("Y:"))
+        self.p1_layout.addWidget(self.p1_y_label)
         self.p1_layout.addWidget(self.p1y_spin)
 
         self.p2_layout = QHBoxLayout()
-        self.p2_layout.addWidget(QLabel("Bar:"))
+        self.p2_layout.addWidget(self.p2_bar_label)
         self.p2_layout.addWidget(self.p2x_spin)
-        self.p2_layout.addWidget(QLabel("Y:"))
+        self.p2_layout.addWidget(self.p2_y_label)
         self.p2_layout.addWidget(self.p2y_spin)
-
-        self.coord_layout.addLayout(self.p1_layout)
-        self.coord_layout.addLayout(self.p2_layout)
 
         self.p1_label = QLabel("Point 1:")
         self.p2_label = QLabel("Point 2:")
@@ -163,25 +160,39 @@ class EditDrawingsDialog(QDialog):
         points = d.get('points', [])
 
         if dtype == 'hline':
-            self.p1_label.setText("Y:")
+            self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(False)
             self.p1x_spin.setVisible(False)
+            self.p1_y_label.setVisible(True)
+            self.p1y_spin.setVisible(True)
             self.p1y_spin.setValue(points[0][1] if points else 0)
             self.p2_label.setVisible(False)
+            self.p2_bar_label.setVisible(False)
             self.p2x_spin.setVisible(False)
+            self.p2_y_label.setVisible(False)
             self.p2y_spin.setVisible(False)
         elif dtype == 'vline':
-            self.p1_label.setText("Bar:")
+            self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(True)
+            self.p1x_spin.setVisible(True)
+            self.p1_y_label.setVisible(False)
             self.p1y_spin.setVisible(False)
             self.p1x_spin.setValue(points[0][0] if points else 0)
             self.p2_label.setVisible(False)
+            self.p2_bar_label.setVisible(False)
             self.p2x_spin.setVisible(False)
+            self.p2_y_label.setVisible(False)
             self.p2y_spin.setVisible(False)
         else:
             self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(True)
             self.p1x_spin.setVisible(True)
+            self.p1_y_label.setVisible(True)
             self.p1y_spin.setVisible(True)
             self.p2_label.setVisible(True)
+            self.p2_bar_label.setVisible(True)
             self.p2x_spin.setVisible(True)
+            self.p2_y_label.setVisible(True)
             self.p2y_spin.setVisible(True)
             if len(points) >= 2:
                 self.p1x_spin.setValue(points[0][0])
