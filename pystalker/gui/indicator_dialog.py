@@ -2,7 +2,7 @@
 PyStalker - Indicator Dialog for configuring indicator parameters
 """
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, 
+    QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QWidget,
     QSpinBox, QDoubleSpinBox, QDialogButtonBox, QGroupBox,
     QFormLayout, QPushButton, QColorDialog, QListWidget,
     QInputDialog, QMessageBox, QCheckBox
@@ -17,11 +17,12 @@ class IndicatorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Add Indicator")
         self.setMinimumWidth(450)
-        self.setMinimumHeight(350)
+        self.setMinimumHeight(500)
         
         self.param_widgets = {}
         self.current_indicator = None
         self.line_colors = {}
+        self.hline_levels = []
         self.existing_indicators = existing_indicators or []
         
         self.init_ui()
@@ -65,6 +66,13 @@ class IndicatorDialog(QDialog):
         
         self.colors_group.setVisible(False)
         
+        self.hlines_group = QGroupBox("Limit Lines")
+        self.hlines_layout = QVBoxLayout()
+        self.hlines_group.setLayout(self.hlines_layout)
+        layout.addWidget(self.hlines_group)
+        
+        self.hlines_group.setVisible(False)
+        
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -86,6 +94,13 @@ class IndicatorDialog(QDialog):
             c = self.line_colors.get(line_name, '#00BFFF')
             label.setStyleSheet(f"background-color: {c}; border: 1px solid white;")
     
+    def _choose_hline_color(self, hline_entry):
+        current = hline_entry.get('color', '#FF6B6B')
+        color = QColorDialog.getColor(QColor(current), self, "Select Limit Line Color")
+        if color.isValid():
+            hline_entry['color'] = color.name()
+            hline_entry['color_label'].setStyleSheet(f"background-color: {color.name()}; border: 1px solid white;")
+    
     def _clear_layout(self, layout):
         while layout.count():
             item = layout.takeAt(0)
@@ -104,10 +119,12 @@ class IndicatorDialog(QDialog):
         
         self._clear_layout(self.params_layout)
         self._clear_layout(self.colors_layout)
+        self._clear_layout(self.hlines_layout)
         
         self.param_widgets.clear()
         self.line_colors.clear()
         self._color_labels = {}
+        self.hline_levels = []
         
         all_indicators = IndicatorManager.ALL_INDICATORS
         if indicator_name not in all_indicators:
@@ -164,6 +181,41 @@ class IndicatorDialog(QDialog):
         else:
             self.colors_group.setVisible(False)
         
+        hline_defaults = IndicatorManager.HLINE_DEFAULTS.get(indicator_name, [])
+        if hline_defaults:
+            self.hlines_group.setVisible(True)
+            for hl in hline_defaults:
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                
+                level_spin = QDoubleSpinBox()
+                level_spin.setRange(-9999, 9999)
+                level_spin.setDecimals(1)
+                level_spin.setValue(hl['level'])
+                row_layout.addWidget(QLabel("Level:"))
+                row_layout.addWidget(level_spin)
+                
+                color_label = QLabel()
+                color_label.setFixedSize(40, 25)
+                color_label.setStyleSheet(f"background-color: {hl['color']}; border: 1px solid white;")
+                color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+                row_layout.addWidget(color_label)
+                
+                color_btn = QPushButton("Color")
+                row_layout.addWidget(color_btn)
+                row_layout.addStretch()
+                
+                hline_entry = {'level': level_spin, 'color': hl['color'], 'color_label': color_label}
+                
+                color_label.mousePressEvent = lambda e, h=hline_entry: self._choose_hline_color(h)
+                color_btn.clicked.connect(lambda checked, h=hline_entry: self._choose_hline_color(h))
+                
+                self.hline_levels.append(hline_entry)
+                self.hlines_layout.addWidget(row_widget)
+        else:
+            self.hlines_group.setVisible(False)
+        
         self.params_group.setVisible(True)
     
     def get_indicator_name(self):
@@ -189,6 +241,12 @@ class IndicatorDialog(QDialog):
     
     def get_indicator_colors(self):
         return dict(self.line_colors)
+    
+    def get_indicator_hlines(self):
+        result = []
+        for h in self.hline_levels:
+            result.append({'level': h['level'].value(), 'color': h['color']})
+        return result
 
 
 class EditIndicatorsDialog(QDialog):
@@ -246,12 +304,12 @@ class EditIndicatorsDialog(QDialog):
         
         ind = self.indicators[current_row]
         
-        from ..core.indicators import IndicatorManager
-        all_indicators = IndicatorManager.ALL_INDICATORS
+        indicator_name = ind.get('indicator_name', ind.get('name', 'Unknown'))
         
         dialog = IndicatorDialog(self)
-        indicator_name = ind.get('indicator_name', ind.get('name', 'Unknown'))
-        dialog.type_combo.setCurrentText(indicator_name)
+        idx = dialog.type_combo.findText(indicator_name)
+        if idx >= 0:
+            dialog.type_combo.setCurrentIndex(idx)
         dialog.on_indicator_changed(indicator_name)
         
         if ind.get('colors'):
@@ -269,6 +327,15 @@ class EditIndicatorsDialog(QDialog):
             if param_name in dialog.param_widgets:
                 dialog.param_widgets[param_name].setValue(value)
         
+        saved_hlines = ind.get('hlines', [])
+        if saved_hlines and dialog.hline_levels:
+            for i, hl in enumerate(saved_hlines):
+                if i < len(dialog.hline_levels):
+                    dialog.hline_levels[i]['level'].setValue(hl.get('level', 0))
+                    dialog.hline_levels[i]['color'] = hl.get('color', '#FF6B6B')
+                    dialog.hline_levels[i]['color_label'].setStyleSheet(
+                        f"background-color: {hl.get('color', '#FF6B6B')}; border: 1px solid white;")
+        
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.indicators[current_row] = {
                 'name': ind.get('name', dialog.get_indicator_name()),
@@ -277,6 +344,7 @@ class EditIndicatorsDialog(QDialog):
                 'params': dialog.get_indicator_params(),
                 'color': dialog.get_indicator_color(),
                 'colors': dialog.get_indicator_colors(),
+                'hlines': dialog.get_indicator_hlines(),
                 'visible': ind.get('visible', True)
             }
             self.refresh_list()

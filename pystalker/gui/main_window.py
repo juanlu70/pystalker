@@ -542,7 +542,11 @@ class PyStalkerWindow(QMainWindow):
         saved_indicators = self.database.load_chart_indicators(symbol)
         for ind in saved_indicators:
             colors = ind.get('colors', {})
-            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, ind.get('params'), colors=colors)
+            hlines = ind.get('hlines', [])
+            params = dict(ind.get('params', {}))
+            if hlines:
+                params['hlines'] = hlines
+            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, params, colors=colors)
             if indicator:
                 color = ind.get('color')
                 visible = ind.get('visible', True)
@@ -551,6 +555,7 @@ class PyStalkerWindow(QMainWindow):
                 tab.indicators[-1]['color'] = color if color else '#00BFFF'
                 tab.indicators[-1]['colors'] = colors
                 tab.indicators[-1]['visible'] = visible
+                tab.indicators[-1]['hlines'] = [{'level': hl['level'], 'color': hl['color']} for hl in indicator.hlines]
                 
                 if ind['type'] == 'overlay':
                     for line in indicator.lines:
@@ -640,10 +645,13 @@ class PyStalkerWindow(QMainWindow):
         
         for ind in indicators:
             indicator_name = ind['indicator_name']
-            params = ind.get('params', {})
+            params = dict(ind.get('params', {}))
             color = ind.get('color', '#00BFFF')
             colors = ind.get('colors', {})
             visible = ind.get('visible', True)
+            hlines = ind.get('hlines', [])
+            if hlines:
+                params['hlines'] = hlines
             
             indicator = IndicatorManager.calculate_indicator(indicator_name, df, params, colors=colors)
             if not indicator:
@@ -655,6 +663,7 @@ class PyStalkerWindow(QMainWindow):
             tab.indicators[-1]['color'] = color
             tab.indicators[-1]['colors'] = colors
             tab.indicators[-1]['visible'] = visible
+            tab.indicators[-1]['hlines'] = ind.get('hlines', [])
             
             if indicator_type == 'overlay':
                 for line in indicator.lines:
@@ -689,6 +698,7 @@ class PyStalkerWindow(QMainWindow):
         tab.indicators[-1]['color'] = first_color
         tab.indicators[-1]['colors'] = colors if colors else {}
         tab.indicators[-1]['visible'] = True
+        tab.indicators[-1]['hlines'] = [{'level': hl['level'], 'color': hl['color']} for hl in indicator.hlines]
         
         if indicator_type == Indicator.OVERLAY:
             for line in indicator.lines:

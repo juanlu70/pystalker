@@ -30,6 +30,7 @@ class Indicator:
         self.lines: List[PlotLine] = []
         self.enabled = True
         self.parameters: Dict = {}
+        self.hlines: List[Dict] = []
     
     def add_line(self, line: PlotLine):
         self.lines.append(line)
@@ -96,6 +97,15 @@ class IndicatorManager:
         'WILLR': [{'name': 'WILLR', 'color': '#FFD700'}],
         'OBV': [{'name': 'OBV', 'color': '#00CED1'}],
         'MFI': [{'name': 'MFI', 'color': '#9370DB'}],
+    }
+    
+    HLINE_DEFAULTS = {
+        'RSI': [{'level': 70, 'color': '#FF6B6B'}, {'level': 30, 'color': '#4ECDC4'}],
+        'CCI': [{'level': 100, 'color': '#FF6B6B'}, {'level': -100, 'color': '#4ECDC4'}],
+        'STOCH': [{'level': 80, 'color': '#FF6B6B'}, {'level': 20, 'color': '#4ECDC4'}],
+        'STOCHRSI': [{'level': 80, 'color': '#FF6B6B'}, {'level': 20, 'color': '#4ECDC4'}],
+        'WILLR': [{'level': -20, 'color': '#FF6B6B'}, {'level': -80, 'color': '#4ECDC4'}],
+        'MFI': [{'level': 80, 'color': '#FF6B6B'}, {'level': 20, 'color': '#4ECDC4'}],
     }
     
     @staticmethod
@@ -167,9 +177,17 @@ class IndicatorManager:
             elif name == 'RSI':
                 result = func(close, timeperiod=default_params['period'])
                 indicator.add_line(PlotLine(f'RSI({default_params["period"]})', result, line_colors.get('RSI', '#9370DB')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('RSI', [])
+                indicator.hlines = hlines
             elif name == 'CCI':
                 result = func(high, low, close, timeperiod=default_params['period'])
                 indicator.add_line(PlotLine(f'CCI({default_params["period"]})', result, line_colors.get('CCI', '#FFD700')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('CCI', [])
+                indicator.hlines = hlines
             elif name == 'ADX':
                 result = func(high, low, close, timeperiod=default_params['period'])
                 indicator.add_line(PlotLine(f'ADX({default_params["period"]})', result, line_colors.get('ADX', '#DA70D6')))
@@ -189,21 +207,37 @@ class IndicatorManager:
                                    slowd_period=default_params['slowd_period'])
                 indicator.add_line(PlotLine('%K', slowk, line_colors.get('%K', '#4169E1')))
                 indicator.add_line(PlotLine('%D', slowd, line_colors.get('%D', '#FF6347')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('STOCH', [])
+                indicator.hlines = hlines
             elif name == 'STOCHRSI':
                 fastk, fastd = func(close, timeperiod=default_params['period'],
                                    fastk_period=default_params['fastk_period'],
                                    fastd_period=default_params['fastd_period'])
                 indicator.add_line(PlotLine('FastK', fastk, line_colors.get('FastK', '#4169E1')))
                 indicator.add_line(PlotLine('FastD', fastd, line_colors.get('FastD', '#FF6347')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('STOCHRSI', [])
+                indicator.hlines = hlines
             elif name == 'WILLR':
                 result = func(high, low, close, timeperiod=default_params['period'])
                 indicator.add_line(PlotLine(f'WILLR({default_params["period"]})', result, line_colors.get('WILLR', '#FFD700')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('WILLR', [])
+                indicator.hlines = hlines
             elif name == 'OBV':
                 result = func(close, volume)
                 indicator.add_line(PlotLine('OBV', result, line_colors.get('OBV', '#00CED1')))
             elif name == 'MFI':
                 result = func(high, low, close, volume, timeperiod=default_params['period'])
                 indicator.add_line(PlotLine(f'MFI({default_params["period"]})', result, line_colors.get('MFI', '#9370DB')))
+                hlines = params.pop('hlines', None) if params else None
+                if hlines is None:
+                    hlines = IndicatorManager.HLINE_DEFAULTS.get('MFI', [])
+                indicator.hlines = hlines
             
             return indicator
         except Exception:
