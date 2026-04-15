@@ -1,6 +1,8 @@
 # pystalker
 A trading analisys software, it is a port of the old and discontinued Qtstalker.
 
+![pystalker](pystalker.png)
+
 
 # Description of the project
 

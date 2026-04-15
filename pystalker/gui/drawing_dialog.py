@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QColorDialog, QComboBox, QDoubleSpinBox, QDialogButtonBox,
+    QPushButton, QColorDialog, QComboBox, QSpinBox, QDoubleSpinBox, QDialogButtonBox,
     QHeaderView, QLabel, QGroupBox, QFormLayout, QMessageBox, QWidget
 )
 from PyQt6.QtCore import Qt
@@ -58,6 +58,11 @@ class EditDrawingsDialog(QDialog):
         self.snap_combo = QComboBox()
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
         edit_layout.addRow("Snap:", self.snap_combo)
+        
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 10)
+        self.width_spin.setValue(1)
+        edit_layout.addRow("Width:", self.width_spin)
 
         self.p1x_spin = QDoubleSpinBox()
         self.p1x_spin.setDecimals(0)
@@ -155,6 +160,7 @@ class EditDrawingsDialog(QDialog):
 
         snap = d.get('snap', '')
         self.snap_combo.setCurrentIndex(SNAP_VALUES.get(snap, 0))
+        self.width_spin.setValue(d.get('width', 1))
 
         dtype = d.get('type', 'trendline')
         points = d.get('points', [])
@@ -216,6 +222,7 @@ class EditDrawingsDialog(QDialog):
         d = self.drawings[row]
         d['color'] = self.color_label.palette().color(self.color_label.backgroundRole()).name()
         d['snap'] = SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+        d['width'] = self.width_spin.value()
 
         dtype = d.get('type', 'trendline')
         if dtype == 'hline':
@@ -261,6 +268,7 @@ class DrawingSettingsDialog(QDialog):
         self.setMinimumWidth(300)
         self._color = drawing.get('color', '#FFFFFF')
         self._snap = drawing.get('snap', '')
+        self._width = drawing.get('width', 1)
         self._init_ui()
     
     def _init_ui(self):
@@ -284,6 +292,11 @@ class DrawingSettingsDialog(QDialog):
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
         self.snap_combo.setCurrentIndex(SNAP_VALUES.get(self._snap, 0))
         form.addRow("Snap:", self.snap_combo)
+        
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 10)
+        self.width_spin.setValue(self._width)
+        form.addRow("Width:", self.width_spin)
         
         points = self.drawing.get('points', [])
         if self.drawing_type == 'hline' and points:
@@ -320,6 +333,9 @@ class DrawingSettingsDialog(QDialog):
     
     def get_snap(self):
         return SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+    
+    def get_width(self):
+        return self.width_spin.value()
     
     def _remove(self):
         self._removed = True

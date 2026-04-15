@@ -2,12 +2,13 @@
 PyStalker - Chart Tab Widget for managing multiple chart tabs
 """
 from PyQt6.QtWidgets import QTabWidget, QWidget, QVBoxLayout, QSplitter
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QByteArray
 from .chart_view import ChartView
 from .indicator_view import IndicatorView
 
 
 class ChartTab(QWidget):
+    indicatorPanelDoubleClicked = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -67,11 +68,21 @@ class ChartTab(QWidget):
     
     def add_indicator_panel(self, indicator, df):
         from .indicator_view import IndicatorPanel
+        
+        saved_x_range = self.chart_view.view_box.viewRange()[0]
+        saved_y_range = self.chart_view.view_box.viewRange()[1]
+        
         panel = IndicatorPanel(indicator, df)
         panel.range_changed.connect(self.on_indicator_range_changed)
+        panel.panelDoubleClicked.connect(self.indicatorPanelDoubleClicked.emit)
         self._indicator_panels[indicator.name] = panel
         self.splitter.addWidget(panel)
         self._distribute_splitter_sizes()
+        
+        panel.plot_widget.setXRange(saved_x_range[0], saved_x_range[1], padding=0)
+        
+        self.chart_view.view_box.setRange(xRange=saved_x_range, padding=0)
+        self.chart_view.view_box.setRange(yRange=saved_y_range, padding=0)
     
     def remove_indicator_panel(self, name):
         if name in self._indicator_panels:
@@ -193,6 +204,7 @@ class ChartTabWidget(QTabWidget):
     chart_closed = pyqtSignal(str)
     current_changed = pyqtSignal(int)
     colors_changed_global = pyqtSignal(str, str)
+    indicatorPanelDoubleClicked = pyqtSignal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -212,23 +224,24 @@ class ChartTabWidget(QTabWidget):
                     tab.chart_view.adjust_volume_height()
         self.current_changed.emit(index)
     
-    def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True) -> ChartTab:
+    def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True):
         if symbol in self.tabs:
             tab = self.tabs[symbol]
             index = self.indexOf(tab)
             if set_current:
                 self.setCurrentIndex(index)
-            return tab
+            return tab, False
         
         tab = ChartTab()
         tab.chart_view.colors_changed.connect(
             lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color)
         )
+        tab.indicatorPanelDoubleClicked.connect(self.indicatorPanelDoubleClicked.emit)
         self.tabs[symbol] = tab
         index = self.addTab(tab, symbol)
         if set_current:
             self.setCurrentIndex(index)
-        return tab
+        return tab, True
     
     def get_current_tab(self) -> ChartTab:
         index = self.currentIndex()

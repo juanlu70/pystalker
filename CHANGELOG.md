@@ -58,6 +58,21 @@
 - Fixed vertical grid alignment between main chart and indicator panels — setXLink syncs X ranges, fixed-width left (45px) and right (65px) axes on all panels ensure identical plot area widths.
 - Indicator title moved to upper-left overlay text (no longer takes space from the plot area).
 - Indicator values legend moved to upper-right to avoid overlapping the title.
+- Chart style (Candlestick, Line, Heikin Ashi) now saved and restored per symbol from the database.
+- Chart Style menu checkmarks update correctly when switching between tabs with different styles.
+- OHLC legend now shows Heikin Ashi values when chart style is set to Heikin Ashi.
+- Volume bar colors now use Heikin Ashi close vs open when in Heikin Ashi mode.
+
+2026-04-15
+
+- Fixed duplicate indicators on startup — load_chart now skips indicator/drawing loading for already-existing tabs.
+- Added `_deduplicate_indicators` database migration to clean up any previously corrupted indicator entries.
+- Changed default drawing width from 2px to 1px for all drawing tools (trendline, hline, vline).
+- Added `pystalker_run.py` convenience launch script.
+- Double-click on a stacked indicator panel opens an edit dialog to change all indicator settings (params, colors, limit lines).
+- Background tab loading now uses deferred event-loop scheduling (QTimer.singleShot) so the UI stays fully responsive while remaining tabs load one at a time.
+- Fixed double-click on drawings to open settings dialog — uses pyqtgraph's sigMouseClicked signal with ev.double() method call (was incorrectly accessing as attribute).
+- Fixed drawing width not persisting — width is now saved in the database (stored in params JSON) and restored correctly on reload.
 
 
 

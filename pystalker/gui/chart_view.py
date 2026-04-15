@@ -20,7 +20,7 @@ class OverlayLine:
 
 
 class TrendLineItem(pg.GraphicsObject):
-    def __init__(self, points, x_min=0, x_max=1000, color='#FFD700', width=2):
+    def __init__(self, points, x_min=0, x_max=1000, color='#FFD700', width=1):
         pg.GraphicsObject.__init__(self)
         self.points = list(points)
         self.x_min = x_min
@@ -92,7 +92,7 @@ class TrendLineItem(pg.GraphicsObject):
 
 
 class HLineItem(pg.GraphicsObject):
-    def __init__(self, y, x_min=0, x_max=1000, color='#FFD700', width=2):
+    def __init__(self, y, x_min=0, x_max=1000, color='#FFD700', width=1):
         pg.GraphicsObject.__init__(self)
         self.y = y
         self.x_min = x_min
@@ -152,7 +152,7 @@ class HLineItem(pg.GraphicsObject):
 
 
 class VLineItem(pg.GraphicsObject):
-    def __init__(self, x, y_min=-1e6, y_max=1e6, color='#FFD700', width=2):
+    def __init__(self, x, y_min=-1e6, y_max=1e6, color='#FFD700', width=1):
         pg.GraphicsObject.__init__(self)
         self.x = x
         self.y_min = y_min
@@ -213,6 +213,7 @@ class ChartView(QWidget):
     indicator_visibility_changed = pyqtSignal(str, bool)
     range_changed = pyqtSignal(float, float, object)
     colors_changed = pyqtSignal()
+    chartStyleChanged = pyqtSignal(str)
     drawModeToggled = pyqtSignal(bool)
     drawingDoubleClicked = pyqtSignal(object)
     
@@ -231,8 +232,9 @@ class ChartView(QWidget):
         self.preview_line = None
         self._dragging_drawing = None
         self._dragging_point_idx = None
-        self.bull_color = '#26a69a'
+        self.bull_color = '#55aaff'
         self.bear_color = '#ef5350'
+        self.chart_style = 'candlestick'
         self._ignore_context_menu = False
         self._draw_mode = False
         self._show_endpoints = False
@@ -283,12 +285,21 @@ class ChartView(QWidget):
                                            rateLimit=60, slot=self.mouse_moved)
         self._mouse_proxy = plot_widget_proxy
         
+        self.plot_widget.scene().sigMouseClicked.connect(self._on_scene_clicked)
+        
         self.candlestick_item = None
         self.volume_item = None
         self.visible_bars = 450
         self.scroll_speed = 50
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
+    
+    def _on_scene_clicked(self, ev):
+        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+            pos = self.plot_widget.plotItem.vb.mapSceneToView(ev.scenePos())
+            hit = self._hit_test_at(pos.x(), pos.y())
+            if hit:
+                self.drawingDoubleClicked.emit(hit)
     
     def showEvent(self, event):
         super().showEvent(event)
@@ -571,17 +582,6 @@ class ChartView(QWidget):
         super().mouseReleaseEvent(event)
     
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            hit_endpoint = self._hit_test_drawing_endpoint(event)
-            hit_line = self._hit_test_drawing_line(event)
-            if hit_endpoint:
-                self.drawingDoubleClicked.emit(hit_endpoint[0])
-                event.accept()
-                return
-            elif hit_line:
-                self.drawingDoubleClicked.emit(hit_line)
-                event.accept()
-                return
         super().mouseDoubleClickEvent(event)
     
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -592,6 +592,58 @@ class ChartView(QWidget):
     
     def _get_next_drawing_color(self):
         return '#FFFFFF'
+    
+    def _hit_test_at(self, mx, my):
+        view_range = self.view_box.viewRange()
+        x_range = view_range[0][1] - view_range[0][0]
+        y_range = view_range[1][1] - view_range[1][0]
+        view_w = self.view_box.size().width()
+        view_h = self.view_box.size().height()
+        hit_radius_x = (x_range / view_w) * 10 if view_w > 0 else 1
+        hit_radius_y = (y_range / view_h) * 10 if view_h > 0 else 1
+        
+        for drawing in self.drawings:
+            if 'item' not in drawing:
+                continue
+            for i, (px, py) in enumerate(drawing['points']):
+                if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
+                    return drawing
+        
+        threshold_y = (y_range / view_h) * 4 if view_h > 0 else 1
+        threshold_x = (x_range / view_w) * 4 if view_w > 0 else 1
+        
+        for drawing in self.drawings:
+            if 'item' not in drawing:
+                continue
+            drawing_type = drawing.get('type', 'trendline')
+            if drawing_type == 'hline':
+                hy = drawing['points'][0][1] if drawing.get('points') else None
+                if hy is not None and abs(my - hy) < threshold_y:
+                    return drawing
+            elif drawing_type == 'vline':
+                vx = drawing['points'][0][0] if drawing.get('points') else None
+                if vx is not None and abs(mx - vx) < threshold_x:
+                    return drawing
+            else:
+                if len(drawing.get('points', [])) < 2:
+                    continue
+                p1 = drawing['points'][0]
+                p2 = drawing['points'][1]
+                x1, y1 = p1
+                x2, y2 = p2
+                dx = x2 - x1
+                dy = y2 - y1
+                length_sq = dx * dx + dy * dy
+                if length_sq == 0:
+                    continue
+                t = ((mx - x1) * dx + (my - y1) * dy) / length_sq
+                t = max(0, t)
+                proj_y = y1 + t * dy
+                dist_x = abs(mx - (x1 + t * dx))
+                dist_y = abs(my - proj_y)
+                if dist_y < threshold_y and dist_x < threshold_x * 3:
+                    return drawing
+        return None
     
     def _hit_test_drawing_endpoint(self, event):
 
@@ -688,7 +740,7 @@ class ChartView(QWidget):
             color = self._get_next_drawing_color()
             x_min = -10
             x_max = len(self.df) + 10 if self.df is not None else 1000
-            item = HLineItem(y, x_min, x_max, color, 2)
+            item = HLineItem(y, x_min, x_max, color, 1)
             item.show_endpoints = self._draw_mode
             self.plot_widget.addItem(item)
             self.drawings.append({
@@ -697,7 +749,8 @@ class ChartView(QWidget):
                 'points': [(0, y)],
                 'color': color,
                 'snap': self.snap_mode or '',
-                'params': {}
+                'params': {},
+                'width': 1
             })
             self.snap_drawing_points(self.drawings[-1])
             self.drawing_trendline = False
@@ -709,7 +762,7 @@ class ChartView(QWidget):
             color = self._get_next_drawing_color()
             y_min = -1e6
             y_max = 1e6
-            item = VLineItem(x_idx, y_min, y_max, color, 2)
+            item = VLineItem(x_idx, y_min, y_max, color, 1)
             item.show_endpoints = self._draw_mode
             self.plot_widget.addItem(item)
             self.drawings.append({
@@ -718,7 +771,8 @@ class ChartView(QWidget):
                 'points': [(x_idx, 0)],
                 'color': color,
                 'snap': '',
-                'params': {}
+                'params': {},
+                'width': 1
             })
             self.drawing_trendline = False
             self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
@@ -744,7 +798,7 @@ class ChartView(QWidget):
             x_min = -10
             x_max = len(self.df) + 10 if self.df is not None else 1000
             
-            trendline = TrendLineItem(self.trendline_points.copy(), x_min, x_max, color, 2)
+            trendline = TrendLineItem(self.trendline_points.copy(), x_min, x_max, color, 1)
             trendline.show_endpoints = self._draw_mode
             self.plot_widget.addItem(trendline)
             self.drawings.append({
@@ -753,7 +807,8 @@ class ChartView(QWidget):
                 'points': self.trendline_points.copy(),
                 'color': color,
                 'snap': self.snap_mode or '',
-                'params': {}
+                'params': {},
+                'width': 1
             })
             self.trendline_points = []
             self.drawing_trendline = False
@@ -797,7 +852,11 @@ class ChartView(QWidget):
                         date_str = date_str.strftime('%Y-%m-%d')
                     else:
                         date_str = str(date_str)[:10]
-                    self.info_text.setText(f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
+                    if self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
+                        ha = self._ha_df
+                        self.info_text.setText(f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
+                    else:
+                        self.info_text.setText(f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
                     self.update_info_position()
         
         if mouse_point and self.drawing_trendline and len(self.trendline_points) == 1:
@@ -858,12 +917,37 @@ class ChartView(QWidget):
             start_idx = max(0, len(self.df) - bars_per_year)
             self.plot_widget.setXRange(start_idx, len(self.df))
     
+    @staticmethod
+    def _heikin_ashi_df(df):
+        ha_df = df.copy()
+        ha_close = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4.0
+        ha_open = [0.0] * len(df)
+        ha_open[0] = (df['Open'].iloc[0] + df['Close'].iloc[0]) / 2.0
+        for i in range(1, len(df)):
+            ha_open[i] = (ha_open[i - 1] + ha_close.iloc[i - 1]) / 2.0
+        ha_df['Open'] = ha_open
+        ha_df['Close'] = ha_close.values
+        ha_df['High'] = df[['High', 'Open', 'Close']].max(axis=1)
+        ha_df['Low'] = df[['Low', 'Open', 'Close']].min(axis=1)
+        ha_df.at[ha_df.index[0], 'Open'] = ha_open[0]
+        for i in range(1, len(df)):
+            ha_df.at[ha_df.index[i], 'Open'] = ha_open[i]
+        return ha_df
+    
+    def set_chart_style(self, style):
+        if style in ('candlestick', 'line', 'heikin_ashi'):
+            self.chart_style = style
+            if self.df is not None and not self.df.empty:
+                self.plot_candlesticks(self.df, self.symbol)
+            self.chartStyleChanged.emit(style)
+    
     def plot_candlesticks(self, df: pd.DataFrame, symbol: str):
         self.df = df
         self.symbol = symbol
         
         self.plot_widget.clear()
         self.candlestick_item = None
+        self.line_curve = None
         self.volume_item = None
         self.indicator_curves.clear()
         
@@ -905,25 +989,47 @@ class ChartView(QWidget):
         if len(self.overlay_lines) > 0:
             self.plot_widget.addLegend(offset=(10, 30))
         
-        candle_data = []
-        for i in range(len(df)):
-            candle_data.append((
-                i,
-                float(df['Open'].iloc[i]),
-                float(df['High'].iloc[i]),
-                float(df['Low'].iloc[i]),
-                float(df['Close'].iloc[i])
-            ))
-        
-        candle_data_to_use = candle_data
-        self.candlestick_item = CandlestickItem(candle_data_to_use, self.bull_color, self.bear_color)
-        self.plot_widget.addItem(self.candlestick_item)
+        if self.chart_style == 'line':
+            self._ha_df = None
+            x = np.arange(len(df))
+            y = df['Close'].values.astype(float)
+            self.line_curve = pg.PlotDataItem(x, y, pen=pg.mkPen(color='#4a90d9', width=2))
+            self.plot_widget.addItem(self.line_curve)
+            self.candlestick_item = None
+        elif self.chart_style == 'heikin_ashi':
+            ha_df = self._heikin_ashi_df(df)
+            self._ha_df = ha_df
+            candle_data = []
+            for i in range(len(ha_df)):
+                candle_data.append((
+                    i,
+                    float(ha_df['Open'].iloc[i]),
+                    float(ha_df['High'].iloc[i]),
+                    float(ha_df['Low'].iloc[i]),
+                    float(ha_df['Close'].iloc[i])
+                ))
+            self.candlestick_item = CandlestickItem(candle_data, self.bull_color, self.bear_color)
+            self.plot_widget.addItem(self.candlestick_item)
+        else:
+            self._ha_df = None
+            candle_data = []
+            for i in range(len(df)):
+                candle_data.append((
+                    i,
+                    float(df['Open'].iloc[i]),
+                    float(df['High'].iloc[i]),
+                    float(df['Low'].iloc[i]),
+                    float(df['Close'].iloc[i])
+                ))
+            self.candlestick_item = CandlestickItem(candle_data, self.bull_color, self.bear_color)
+            self.plot_widget.addItem(self.candlestick_item)
         
         if 'Volume' in df.columns:
+            vol_df = self._ha_df if (self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None) else df
             volume_data = []
             for i in range(len(df)):
-                close = float(df['Close'].iloc[i])
-                open_val = float(df['Open'].iloc[i])
+                close = float(vol_df['Close'].iloc[i])
+                open_val = float(vol_df['Open'].iloc[i])
                 vol = float(df['Volume'].iloc[i])
                 color = self.bull_color if close >= open_val else self.bear_color
                 volume_data.append((i, vol, color))
@@ -1018,7 +1124,11 @@ class ChartView(QWidget):
                     dt_str = last_idx.strftime('%Y-%m-%d %H:%M')
                 except Exception:
                     dt_str = str(last_idx)
-            text = f"{dt_str}  O: {last_row['Open']:.2f}  H: {last_row['High']:.2f}  L: {last_row['Low']:.2f}  C: {last_row['Close']:.2f}"
+            if self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
+                ha_row = self._ha_df.iloc[-1]
+                text = f"{dt_str}  O: {ha_row['Open']:.2f}  H: {ha_row['High']:.2f}  L: {ha_row['Low']:.2f}  C: {ha_row['Close']:.2f}"
+            else:
+                text = f"{dt_str}  O: {last_row['Open']:.2f}  H: {last_row['High']:.2f}  L: {last_row['Low']:.2f}  C: {last_row['Close']:.2f}"
             self.info_text.setText(text)
             self.update_info_position()
     
@@ -1184,6 +1294,7 @@ class ChartView(QWidget):
         for d in drawings_data:
             drawing_type = d.get('type', 'trendline')
             color = d.get('color', '#FFD700')
+            width = d.get('width', 1)
             
             if drawing_type == 'hline':
                 points = [tuple(p) for p in d.get('points', [])]
@@ -1192,7 +1303,7 @@ class ChartView(QWidget):
                 y = points[0][1]
                 x_min = -10
                 x_max = len(self.df) + 10 if self.df is not None else 1000
-                item = HLineItem(y, x_min, x_max, color, 2)
+                item = HLineItem(y, x_min, x_max, color, width)
                 self.plot_widget.addItem(item)
                 self.drawings.append({
                     'type': 'hline',
@@ -1200,14 +1311,15 @@ class ChartView(QWidget):
                     'points': [(0, y)],
                     'color': color,
                     'snap': d.get('snap', ''),
-                    'params': d.get('params', {})
+                    'params': d.get('params', {}),
+                    'width': width
                 })
             elif drawing_type == 'vline':
                 points = [tuple(p) for p in d.get('points', [])]
                 if not points:
                     continue
                 x = points[0][0]
-                item = VLineItem(x, -1e6, 1e6, color, 2)
+                item = VLineItem(x, -1e6, 1e6, color, width)
                 self.plot_widget.addItem(item)
                 self.drawings.append({
                     'type': 'vline',
@@ -1215,7 +1327,8 @@ class ChartView(QWidget):
                     'points': [(x, 0)],
                     'color': color,
                     'snap': d.get('snap', ''),
-                    'params': d.get('params', {})
+                    'params': d.get('params', {}),
+                    'width': width
                 })
             else:
                 points = [tuple(p) for p in d.get('points', [])]
@@ -1223,7 +1336,7 @@ class ChartView(QWidget):
                     continue
                 x_min = -10
                 x_max = len(self.df) + 10 if self.df is not None else 1000
-                item = TrendLineItem(points, x_min, x_max, color, 2)
+                item = TrendLineItem(points, x_min, x_max, color, width)
                 self.plot_widget.addItem(item)
                 self.drawings.append({
                     'type': 'trendline',
@@ -1231,14 +1344,15 @@ class ChartView(QWidget):
                     'points': points,
                     'color': color,
                     'snap': d.get('snap', ''),
-                    'params': d.get('params', {})
+                    'params': d.get('params', {}),
+                    'width': width
                 })
         for drawing in self.drawings:
             self.snap_drawing_points(drawing)
 
 
 class CandlestickItem(pg.GraphicsObject):
-    def __init__(self, data, bull_color='#26a69a', bear_color='#ef5350'):
+    def __init__(self, data, bull_color='#55aaff', bear_color='#ef5350'):
         pg.GraphicsObject.__init__(self)
         self.data = data
         self.bull_color = bull_color
