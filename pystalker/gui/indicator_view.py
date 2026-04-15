@@ -13,6 +13,7 @@ from .shared import PriceAxisItem
 
 class IndicatorPanel(QWidget):
     range_changed = pyqtSignal(float, float, object)
+    panelDoubleClicked = pyqtSignal(str)
     
     def __init__(self, indicator: Indicator, data: pd.DataFrame, parent=None):
         super().__init__(parent)
@@ -32,7 +33,11 @@ class IndicatorPanel(QWidget):
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.showAxis('right')
         self.plot_widget.hideAxis('left')
-        self.plot_widget.setTitle(indicator.name, color='w', size='10pt')
+        self.plot_widget.setTitle(None)
+        
+        self.title_text = pg.TextItem(indicator.name, color='w', anchor=(0, 0))
+        self.title_text.setFont(pg.QtGui.QFont('sans-serif', 10))
+        self.plot_widget.addItem(self.title_text, ignoreBounds=True)
         
         self.view_box = self.plot_widget.plotItem.vb
         self.view_box.sigXRangeChanged.connect(self.on_range_changed)
@@ -40,15 +45,22 @@ class IndicatorPanel(QWidget):
         
         layout.addWidget(self.plot_widget)
         
-        self.info_text = pg.TextItem("", color='#FFFF00', anchor=(0, 0))
+        self.info_text = pg.TextItem("", color='#FFFF00', anchor=(1, 0))
         self.info_text.setFont(pg.QtGui.QFont('monospace', 9))
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
         
         self.plot_indicator()
         
-        plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
+        self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
                                            rateLimit=60, slot=self.mouse_moved)
     
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.panelDoubleClicked.emit(self.indicator.name)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def plot_indicator(self):
         self.plot_widget.clear()
         self.curves.clear()
@@ -61,11 +73,20 @@ class IndicatorPanel(QWidget):
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
         
+        self.plot_widget.addItem(self.title_text, ignoreBounds=True)
+        self.plot_widget.addItem(self.info_text, ignoreBounds=True)
+        self.update_info_position()
+        
+        self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
+                                           rateLimit=60, slot=self.mouse_moved)
+        
         for hl in self.indicator.hlines:
             level = hl.get('level', 0)
             color = hl.get('color', '#FF6B6B')
             line = pg.InfiniteLine(pos=level, angle=0, pen=pg.mkPen(color=color, width=1, style=Qt.PenStyle.DashLine))
             self.plot_widget.addItem(line)
+        
+        self.plot_widget.disableAutoRange()
         
         for line in self.indicator.lines:
             if len(line.data) == len(self.data):
@@ -78,6 +99,14 @@ class IndicatorPanel(QWidget):
                                                   pen=pg.mkPen(color=line.color, width=line.width),
                                                   name=line.name)
                     self.curves.append((curve, line.name, line.data))
+        
+        y_min = np.nanmin([np.nanmin(line.data) for line in self.indicator.lines if len(line.data) > 0])
+        y_max = np.nanmax([np.nanmax(line.data) for line in self.indicator.lines if len(line.data) > 0])
+        if np.isfinite(y_min) and np.isfinite(y_max):
+            padding = (y_max - y_min) * 0.05 if y_max != y_min else 1.0
+            self.plot_widget.setYRange(y_min - padding, y_max + padding, padding=0)
+        
+        self.update_info_position()
     
     def mouse_moved(self, evt):
         pos = evt[0]
@@ -97,12 +126,23 @@ class IndicatorPanel(QWidget):
                     self.info_text.setText("  ".join(info_parts))
                     self.update_info_position()
     
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.update_info_position()
+    
     def update_info_position(self):
-        view_range = self.view_box.viewRange()
+        try:
+            view_range = self.view_box.viewRange()
+        except Exception:
+            return
         x_min, x_max = view_range[0]
         y_min, y_max = view_range[1]
+        if x_max - x_min == 0 or y_max - y_min == 0:
+            return
         padding = (y_max - y_min) * 0.05
-        self.info_text.setPos(x_min + 2, y_max - padding)
+        padding_x = (x_max - x_min) * 0.02
+        self.info_text.setPos(x_max - padding_x, y_max - padding)
+        self.title_text.setPos(x_min + 2, y_max - (y_max - y_min) * 0.02)
     
     def on_range_changed(self, view_box):
         view_range = self.view_box.viewRange()

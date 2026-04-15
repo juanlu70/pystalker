@@ -50,6 +50,7 @@ class Database:
         self.conn.commit()
         
         self._migrate_old_schema()
+        self._deduplicate_indicators()
     
     def _migrate_old_schema(self):
         cursor = self.conn.cursor()
@@ -145,6 +146,40 @@ class Database:
             
             self.conn.commit()
     
+    def _deduplicate_indicators(self):
+        import json
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT symbol FROM symbols")
+        symbols = [row[0] for row in cursor.fetchall()]
+        for symbol in symbols:
+            settings_table = f'"{symbol}_settings"'
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name=?", (f'{symbol}_settings',))
+            if not cursor.fetchone():
+                continue
+            cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('indicators',))
+            row = cursor.fetchone()
+            if not row:
+                continue
+            try:
+                indicators = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(indicators, list):
+                continue
+            seen = set()
+            unique = []
+            for ind in indicators:
+                name = ind.get('name', '')
+                if name not in seen:
+                    seen.add(name)
+                    unique.append(ind)
+            if len(unique) < len(indicators):
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {settings_table} (key, value)
+                    VALUES (?, ?)
+                ''', ('indicators', json.dumps(unique)))
+        self.conn.commit()
+
     def _ensure_symbol_tables(self, symbol: str):
         cursor = self.conn.cursor()
         
@@ -388,6 +423,24 @@ class Database:
         
         return {}
     
+    def save_chart_style(self, symbol: str, style: str):
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('chart_style', style))
+        self.conn.commit()
+
+    def load_chart_style(self, symbol: str) -> str:
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f'SELECT value FROM {settings_table} WHERE key = ?', ('chart_style',))
+        row = cursor.fetchone()
+        return row[0] if row else 'candlestick'
+
     def save_setting(self, key: str, value: str):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -427,6 +480,8 @@ class Database:
         
         for drawing in drawings:
             import json
+            params = dict(drawing.get('params', {}))
+            params['width'] = drawing.get('width', 1)
             cursor.execute(f'''
                 INSERT INTO {drawings_table} (type, color, snap, params, points)
                 VALUES (?, ?, ?, ?, ?)
@@ -434,7 +489,7 @@ class Database:
                 drawing.get('type', 'trendline'),
                 drawing.get('color', '#FFD700'),
                 drawing.get('snap', ''),
-                json.dumps(drawing.get('params', {})),
+                json.dumps(params),
                 json.dumps(drawing.get('points', []))
             ))
         
@@ -450,12 +505,15 @@ class Database:
         drawings = []
         for row in cursor.fetchall():
             import json
+            params = json.loads(row[3]) if row[3] else {}
+            width = params.pop('width', 1)
             drawings.append({
                 'type': row[0],
                 'color': row[1],
                 'snap': row[2] if row[2] else '',
-                'params': json.loads(row[3]) if row[3] else {},
-                'points': json.loads(row[4]) if row[4] else []
+                'params': params,
+                'points': json.loads(row[4]) if row[4] else [],
+                'width': width
             })
         
         return drawings

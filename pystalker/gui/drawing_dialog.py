@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QColorDialog, QComboBox, QDoubleSpinBox, QDialogButtonBox,
-    QHeaderView, QLabel, QGroupBox, QFormLayout, QMessageBox
+    QPushButton, QColorDialog, QComboBox, QSpinBox, QDoubleSpinBox, QDialogButtonBox,
+    QHeaderView, QLabel, QGroupBox, QFormLayout, QMessageBox, QWidget
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -58,6 +58,11 @@ class EditDrawingsDialog(QDialog):
         self.snap_combo = QComboBox()
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
         edit_layout.addRow("Snap:", self.snap_combo)
+        
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 10)
+        self.width_spin.setValue(1)
+        edit_layout.addRow("Width:", self.width_spin)
 
         self.p1x_spin = QDoubleSpinBox()
         self.p1x_spin.setDecimals(0)
@@ -72,25 +77,22 @@ class EditDrawingsDialog(QDialog):
         self.p2y_spin.setDecimals(2)
         self.p2y_spin.setRange(-999999, 999999)
 
-        self.coord_label = QLabel()
-        self.coord_row = QWidget()
-        self.coord_layout = QHBoxLayout(self.coord_row)
-        self.coord_layout.setContentsMargins(0, 0, 0, 0)
+        self.p1_bar_label = QLabel("Bar:")
+        self.p1_y_label = QLabel("Y:")
+        self.p2_bar_label = QLabel("Bar:")
+        self.p2_y_label = QLabel("Y:")
 
         self.p1_layout = QHBoxLayout()
-        self.p1_layout.addWidget(QLabel("Bar:"))
+        self.p1_layout.addWidget(self.p1_bar_label)
         self.p1_layout.addWidget(self.p1x_spin)
-        self.p1_layout.addWidget(QLabel("Y:"))
+        self.p1_layout.addWidget(self.p1_y_label)
         self.p1_layout.addWidget(self.p1y_spin)
 
         self.p2_layout = QHBoxLayout()
-        self.p2_layout.addWidget(QLabel("Bar:"))
+        self.p2_layout.addWidget(self.p2_bar_label)
         self.p2_layout.addWidget(self.p2x_spin)
-        self.p2_layout.addWidget(QLabel("Y:"))
+        self.p2_layout.addWidget(self.p2_y_label)
         self.p2_layout.addWidget(self.p2y_spin)
-
-        self.coord_layout.addLayout(self.p1_layout)
-        self.coord_layout.addLayout(self.p2_layout)
 
         self.p1_label = QLabel("Point 1:")
         self.p2_label = QLabel("Point 2:")
@@ -158,30 +160,45 @@ class EditDrawingsDialog(QDialog):
 
         snap = d.get('snap', '')
         self.snap_combo.setCurrentIndex(SNAP_VALUES.get(snap, 0))
+        self.width_spin.setValue(d.get('width', 1))
 
         dtype = d.get('type', 'trendline')
         points = d.get('points', [])
 
         if dtype == 'hline':
-            self.p1_label.setText("Y:")
+            self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(False)
             self.p1x_spin.setVisible(False)
+            self.p1_y_label.setVisible(True)
+            self.p1y_spin.setVisible(True)
             self.p1y_spin.setValue(points[0][1] if points else 0)
             self.p2_label.setVisible(False)
+            self.p2_bar_label.setVisible(False)
             self.p2x_spin.setVisible(False)
+            self.p2_y_label.setVisible(False)
             self.p2y_spin.setVisible(False)
         elif dtype == 'vline':
-            self.p1_label.setText("Bar:")
+            self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(True)
+            self.p1x_spin.setVisible(True)
+            self.p1_y_label.setVisible(False)
             self.p1y_spin.setVisible(False)
             self.p1x_spin.setValue(points[0][0] if points else 0)
             self.p2_label.setVisible(False)
+            self.p2_bar_label.setVisible(False)
             self.p2x_spin.setVisible(False)
+            self.p2_y_label.setVisible(False)
             self.p2y_spin.setVisible(False)
         else:
             self.p1_label.setText("Point 1:")
+            self.p1_bar_label.setVisible(True)
             self.p1x_spin.setVisible(True)
+            self.p1_y_label.setVisible(True)
             self.p1y_spin.setVisible(True)
             self.p2_label.setVisible(True)
+            self.p2_bar_label.setVisible(True)
             self.p2x_spin.setVisible(True)
+            self.p2_y_label.setVisible(True)
             self.p2y_spin.setVisible(True)
             if len(points) >= 2:
                 self.p1x_spin.setValue(points[0][0])
@@ -205,6 +222,7 @@ class EditDrawingsDialog(QDialog):
         d = self.drawings[row]
         d['color'] = self.color_label.palette().color(self.color_label.backgroundRole()).name()
         d['snap'] = SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+        d['width'] = self.width_spin.value()
 
         dtype = d.get('type', 'trendline')
         if dtype == 'hline':
@@ -250,6 +268,7 @@ class DrawingSettingsDialog(QDialog):
         self.setMinimumWidth(300)
         self._color = drawing.get('color', '#FFFFFF')
         self._snap = drawing.get('snap', '')
+        self._width = drawing.get('width', 1)
         self._init_ui()
     
     def _init_ui(self):
@@ -273,6 +292,11 @@ class DrawingSettingsDialog(QDialog):
         self.snap_combo.addItems(["None", "Open", "High", "Low", "Close"])
         self.snap_combo.setCurrentIndex(SNAP_VALUES.get(self._snap, 0))
         form.addRow("Snap:", self.snap_combo)
+        
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 10)
+        self.width_spin.setValue(self._width)
+        form.addRow("Width:", self.width_spin)
         
         points = self.drawing.get('points', [])
         if self.drawing_type == 'hline' and points:
@@ -309,6 +333,9 @@ class DrawingSettingsDialog(QDialog):
     
     def get_snap(self):
         return SNAP_INDEX_TO_MODE.get(self.snap_combo.currentIndex(), '')
+    
+    def get_width(self):
+        return self.width_spin.value()
     
     def _remove(self):
         self._removed = True
