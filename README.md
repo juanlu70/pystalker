@@ -36,7 +36,14 @@ Some parts of this project are C++ (from PyQT6) to improve speed to avoid the py
 virtualenv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python -m pystalker
+./pystalker_run.py
+```
+
+Or you can simply run directly without a virtual envinronment (not recommended):
+
+```
+pip install -r requirements.txt
+./pystalker_run.py
 ```
 
 It is not necessary to create the virtual environment but recommended.
