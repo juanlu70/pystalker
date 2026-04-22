@@ -71,8 +71,14 @@
 - Added `pystalker_run.py` convenience launch script.
 - Double-click on a stacked indicator panel opens an edit dialog to change all indicator settings (params, colors, limit lines).
 - Background tab loading now uses deferred event-loop scheduling (QTimer.singleShot) so the UI stays fully responsive while remaining tabs load one at a time.
-- Fixed double-click on drawings to open settings dialog — uses pyqtgraph's sigMouseClicked signal with ev.double() method call (was incorrectly accessing as attribute).
+- Right-click on a drawing shows a context menu with type-specific settings ("Trendline Settings", "Horizontal Line Settings", "Vertical Line Settings") and a Remove option. Suppresses the default bull/bear color menu when clicking on a drawing.
 - Fixed drawing width not persisting — width is now saved in the database (stored in params JSON) and restored correctly on reload.
+- Draw mode cursor changed to bright crosshair (#FFFFFF + #FFAA00) visible on dark backgrounds.
+- Drawing tool icons (trend, horizontal, vertical) brightened to #00BFFF for dark mode visibility.
+- Download toolbar icon brightened for dark mode.
+- Color box in Edit Drawings dialog is now clickable — opens color picker directly.
+- Double-click on drawings opens settings dialog (via viewport eventFilter with proper coordinate mapping using mapToScene).
+- Stacked indicator title text now visible on startup (showEvent triggers repositioning for background tabs).
 
 
 
