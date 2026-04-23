@@ -1,12 +1,12 @@
 # pystalker
-A trading analisys software, it is a port of the old and discontinued Qtstalker.
+A trading analysis software, it is a port of the old and discontinued Qtstalker.
 
 ![pystalker](pystalker.png)
 
 
 # Description of the project
 
-Around 2005/2006 a tranding analysis program was bundled with Debian Linux distributions, this was the time I discovered Qtstalker.
+Around 2005/2006 a tranding analisys program was bundled with Debian Linux distributions, this was the time I discovered Qtstalker.
 
 The program was very good and very advanced to its time, took a very good advantage of the LibQT3 library and it can work with lots of external resources such Yahoo API, CSV data, CME data and NYBot data.
 
@@ -26,6 +26,15 @@ I only have a very basic knowledge of C++ and LibQT, I am mainly a python develo
 4.- My final try was to make a python program with PyQT6 to emulate the same behaviour of the original program, and providing the AI agent with the original code, it seems that this time the result was good.
 
 When I wrote this README, the project is still in a very early stage, has lots of bugs, many functions are not working and there is a long trip to get the program finished and in the stage of what I would consider finished, but I want to share the code with the communinty and see if there are people interested on the project and able to contribute to it, in the current state it is really usable and can deliver results.
+
+
+# Features
+
+- Downaloads data from Yahoo Finance (only daily data), future support for CSV data and possibly other data source endpoints, also in real time!
+- Overlay technical indicators: Simple Moving Average, Exponential Moving Average, Bollinguer Bands, Parabollic SAR.
+- Stacked technical indicators: MACD, RSI, CCI, ADX, ATR, Momentum, ROC, Stochastic, Stochastic RSI, WILLR, OBV, MFI.
+- Drawings: Trendlines, Horizontal lines, Vertical lines, future support for fibonacci drawings.
+- Types of graphs: Lines, candles, Heikin Ashi, future support for open candles.
 
 
 # Running the program

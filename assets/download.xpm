@@ -2,9 +2,9 @@
 static const char *download[]={
 "22 22 39 1",
 ". c None",
-"c c #303030",
-"r c #3a3a3a",
-"g c #595959",
+"c c #A0A0A0",
+"r c #B0B0B0",
+"g c #C0C0C0",
 "# c #878787",
 "K c #888888",
 "I c #898989",

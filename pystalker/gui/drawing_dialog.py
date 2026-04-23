@@ -47,6 +47,8 @@ class EditDrawingsDialog(QDialog):
         self.color_label = QLabel()
         self.color_label.setFixedSize(60, 25)
         self.color_label.setStyleSheet("background-color: #FFFFFF; border: 1px solid white;")
+        self.color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.color_label.mousePressEvent = lambda e: self._choose_color()
         self.color_btn = QPushButton("Choose Color")
         self.color_btn.clicked.connect(self._choose_color)
         color_row = QHBoxLayout()

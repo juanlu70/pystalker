@@ -1,10 +1,11 @@
 """
 PyStalker - Chart View using PyQtGraph for high performance
 """
+import os
 import numpy as np
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMenu, QColorDialog
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QPointF
-from PyQt6.QtGui import QWheelEvent, QMouseEvent, QKeyEvent
+from PyQt6.QtGui import QWheelEvent, QMouseEvent, QKeyEvent, QCursor, QPixmap
 import pyqtgraph as pg
 import pandas as pd
 
@@ -235,6 +236,7 @@ class ChartView(QWidget):
         self.bull_color = '#55aaff'
         self.bear_color = '#ef5350'
         self.chart_style = 'candlestick'
+        self._drawing_context_hit = None
         self._ignore_context_menu = False
         self._draw_mode = False
         self._show_endpoints = False
@@ -285,7 +287,7 @@ class ChartView(QWidget):
                                            rateLimit=60, slot=self.mouse_moved)
         self._mouse_proxy = plot_widget_proxy
         
-        self.plot_widget.scene().sigMouseClicked.connect(self._on_scene_clicked)
+        self.plot_widget.viewport().installEventFilter(self)
         
         self.candlestick_item = None
         self.volume_item = None
@@ -294,12 +296,22 @@ class ChartView(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
     
-    def _on_scene_clicked(self, ev):
-        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
-            pos = self.plot_widget.plotItem.vb.mapSceneToView(ev.scenePos())
-            hit = self._hit_test_at(pos.x(), pos.y())
-            if hit:
-                self.drawingDoubleClicked.emit(hit)
+    def eventFilter(self, obj, event):
+        if obj is self.plot_widget.viewport():
+            if event.type() == QMouseEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+                scene_pos = self.plot_widget.mapToScene(event.position().toPoint())
+                pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(scene_pos))
+                hit = self._hit_test_at(pos.x(), pos.y())
+                if hit:
+                    self.drawingDoubleClicked.emit(hit)
+                    return True
+            elif event.type() == QMouseEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
+                scene_pos = self.plot_widget.mapToScene(event.position().toPoint())
+                pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(scene_pos))
+                hit = self._hit_test_at(pos.x(), pos.y())
+                if hit:
+                    self._drawing_context_hit = hit
+        return super().eventFilter(obj, event)
     
     def showEvent(self, event):
         super().showEvent(event)
@@ -381,8 +393,31 @@ class ChartView(QWidget):
             super().keyPressEvent(event)
     
     def show_context_menu(self, pos):
-        # Prevent context menu from showing multiple times
         if self._ignore_context_menu:
+            return
+        
+        drawing = self._drawing_context_hit
+        if drawing:
+            self._drawing_context_hit = None
+            drawing_type = drawing.get('type', 'trendline')
+            if drawing_type == 'trendline':
+                label = "Trendline Settings"
+            elif drawing_type == 'hline':
+                label = "Horizontal Line Settings"
+            elif drawing_type == 'vline':
+                label = "Vertical Line Settings"
+            else:
+                label = "Drawing Settings"
+            menu = QMenu(self)
+            settings_action = menu.addAction(label)
+            remove_action = menu.addAction("Remove")
+            action = menu.exec(self.plot_widget.mapToGlobal(pos))
+            if action == settings_action:
+                self.drawingDoubleClicked.emit(drawing)
+            elif action == remove_action:
+                if 'item' in drawing:
+                    self.plot_widget.removeItem(drawing['item'])
+                self.drawings.remove(drawing)
             return
         
         menu = QMenu(self)
@@ -465,9 +500,15 @@ class ChartView(QWidget):
             self.plot_widget.setMouseEnabled(x=False, y=False)
             self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
             self.update_info_position()
+            crosshair_pixmap = QPixmap(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets', 'crosshair.xpm'))
+            if crosshair_pixmap.isNull():
+                self.plot_widget.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.plot_widget.setCursor(QCursor(crosshair_pixmap, 8, 8))
         else:
             self.releaseMouse()
             self.plot_widget.setMouseEnabled(x=True, y=True)
+            self.plot_widget.setCursor(Qt.CursorShape.ArrowCursor)
             self.drawing_trendline = False
             self.trendline_points = []
             if self.preview_line is not None:
@@ -601,6 +642,8 @@ class ChartView(QWidget):
         view_h = self.view_box.size().height()
         hit_radius_x = (x_range / view_w) * 10 if view_w > 0 else 1
         hit_radius_y = (y_range / view_h) * 10 if view_h > 0 else 1
+        threshold_y = (y_range / view_h) * 4 if view_h > 0 else 1
+        threshold_x = (x_range / view_w) * 4 if view_w > 0 else 1
         
         for drawing in self.drawings:
             if 'item' not in drawing:
@@ -608,9 +651,6 @@ class ChartView(QWidget):
             for i, (px, py) in enumerate(drawing['points']):
                 if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
                     return drawing
-        
-        threshold_y = (y_range / view_h) * 4 if view_h > 0 else 1
-        threshold_x = (x_range / view_w) * 4 if view_w > 0 else 1
         
         for drawing in self.drawings:
             if 'item' not in drawing:
