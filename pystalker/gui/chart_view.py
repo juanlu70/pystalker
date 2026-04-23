@@ -233,6 +233,8 @@ class ChartView(QWidget):
         self.preview_line = None
         self._dragging_drawing = None
         self._dragging_point_idx = None
+        self._drag_start_pos = None
+        self._drag_start_points = None
         self.bull_color = '#55aaff'
         self.bear_color = '#ef5350'
         self.chart_style = 'candlestick'
@@ -410,10 +412,13 @@ class ChartView(QWidget):
                 label = "Drawing Settings"
             menu = QMenu(self)
             settings_action = menu.addAction(label)
+            copy_action = menu.addAction("Copy Drawing")
             remove_action = menu.addAction("Remove")
             action = menu.exec(self.plot_widget.mapToGlobal(pos))
             if action == settings_action:
                 self.drawingDoubleClicked.emit(drawing)
+            elif action == copy_action:
+                self._copy_drawing(drawing)
             elif action == remove_action:
                 if 'item' in drawing:
                     self.plot_widget.removeItem(drawing['item'])
@@ -449,6 +454,69 @@ class ChartView(QWidget):
     def set_colors(self, bull_color: str, bear_color: str):
         self.bull_color = bull_color
         self.bear_color = bear_color
+    
+    def _copy_drawing(self, drawing):
+        import copy
+        drawing_type = drawing.get('type', 'trendline')
+        color = drawing.get('color', '#FFD700')
+        width = drawing.get('width', 1)
+        snap = drawing.get('snap', '')
+        x_min = -10
+        x_max = len(self.df) + 10 if self.df is not None else 1000
+        
+        view_range = self.view_box.viewRange()
+        offset_x = (view_range[0][1] - view_range[0][0]) * 0.02
+        offset_y = (view_range[1][1] - view_range[1][0]) * 0.03
+        
+        if drawing_type == 'hline':
+            orig_y = drawing['points'][0][1] if drawing.get('points') else 0
+            new_y = orig_y + offset_y
+            item = HLineItem(new_y, x_min, x_max, color, width)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': 'hline',
+                'item': item,
+                'points': [(0, new_y)],
+                'color': color,
+                'snap': '',
+                'params': copy.deepcopy(drawing.get('params', {})),
+                'width': width
+            })
+        elif drawing_type == 'vline':
+            orig_x = drawing['points'][0][0] if drawing.get('points') else 0
+            new_x = int(round(orig_x + offset_x))
+            item = VLineItem(new_x, -1e6, 1e6, color, width)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': 'vline',
+                'item': item,
+                'points': [(new_x, 0)],
+                'color': color,
+                'snap': '',
+                'params': copy.deepcopy(drawing.get('params', {})),
+                'width': width
+            })
+        else:
+            orig_points = drawing.get('points', [])
+            if len(orig_points) < 2:
+                return
+            new_points = [(int(round(px + offset_x)), py + offset_y) for px, py in orig_points]
+            item = TrendLineItem(new_points, x_min, x_max, color, width)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': 'trendline',
+                'item': item,
+                'points': new_points,
+                'color': color,
+                'snap': '',
+                'params': copy.deepcopy(drawing.get('params', {})),
+                'width': width
+            })
+        
+        self.plot_widget.update()
     
     def _snap_y(self, x, y, snap_mode=None):
         if self.df is None or not snap_mode:
@@ -569,10 +637,16 @@ class ChartView(QWidget):
                         self._dragging_drawing = hit_endpoint[0]
                         self._dragging_point_idx = hit_endpoint[1]
                         self.grabMouse()
-                    elif drawing_type != 'trendline':
-                        self._dragging_drawing = hit_line
-                        self._dragging_point_idx = 0
-                        self.grabMouse()
+                    else:
+                        if drawing_type == 'trendline':
+                            self._dragging_drawing = hit_line
+                            self._dragging_point_idx = -1
+                            self._drag_start_pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
+                            self._drag_start_points = [tuple(p) for p in hit_line.get('points', [])]
+                            self.grabMouse()
+                        else:
+                            self._dragging_drawing = None
+                            self._dragging_point_idx = None
                     event.accept()
                     return
                 if self.drawing_trendline:
@@ -603,12 +677,14 @@ class ChartView(QWidget):
                     if drawing_type == 'trendline':
                         self.draw_mode = True
                         self.drawModeToggled.emit(True)
+                        self._dragging_drawing = hit_line
+                        self._dragging_point_idx = -1
+                        self._drag_start_pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
+                        self._drag_start_points = [tuple(p) for p in hit_line.get('points', [])]
+                        self.grabMouse()
                     else:
                         self.draw_mode = True
                         self.drawModeToggled.emit(True)
-                        self._dragging_drawing = hit_line
-                        self._dragging_point_idx = 0
-                        self.grabMouse()
                     event.accept()
                     return
         super().mousePressEvent(event)
@@ -700,9 +776,20 @@ class ChartView(QWidget):
         for drawing in self.drawings:
             if 'item' not in drawing:
                 continue
-            for i, (px, py) in enumerate(drawing['points']):
-                if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
-                    return (drawing, i)
+            drawing_type = drawing.get('type', 'trendline')
+            if drawing_type == 'hline':
+                py = drawing['points'][0][1] if drawing.get('points') else None
+                if py is not None and abs(my - py) < hit_radius_y:
+                    if abs(mx - view_range[0][0]) < hit_radius_x * 3:
+                        return (drawing, 0)
+            elif drawing_type == 'vline':
+                px = drawing['points'][0][0] if drawing.get('points') else None
+                if px is not None and abs(mx - px) < hit_radius_x:
+                    return (drawing, 0)
+            else:
+                for i, (px, py) in enumerate(drawing['points']):
+                    if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
+                        return (drawing, i)
         return None
     
     def _hit_test_drawing_line(self, event):
@@ -755,7 +842,23 @@ class ChartView(QWidget):
         snap = self._dragging_drawing.get('snap', '') or self.snap_mode
         drawing_type = self._dragging_drawing.get('type', 'trendline')
         
-        if drawing_type == 'hline':
+        if self._dragging_point_idx == -1 and drawing_type == 'trendline':
+            dx = x - self._drag_start_pos.x()
+            dy = y - self._drag_start_pos.y()
+            if snap:
+                x_snap, y_snap = self._snap_y(x, y, snap)
+                x_snap0, y_snap0 = self._snap_y(self._drag_start_pos.x(), self._drag_start_pos.y(), snap)
+                dx = x_snap - x_snap0
+                dy = y_snap - y_snap0
+            for i, (ox, oy) in enumerate(self._drag_start_points):
+                new_x = int(round(ox + dx))
+                new_y = oy + dy
+                if snap:
+                    _, new_y = self._snap_y(ox + dx, oy + dy, snap)
+                self._dragging_drawing['points'][i] = (new_x, new_y)
+                self._dragging_drawing['item'].update_point(i, new_x, new_y)
+            self.plot_widget.update()
+        elif drawing_type == 'hline':
             x, y = self._snap_y(x, y, snap)
             self._dragging_drawing['item'].setY(y)
             self._dragging_drawing['points'] = [(0, y)]
