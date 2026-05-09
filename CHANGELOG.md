@@ -98,6 +98,7 @@
 - Right-click context menu on spreads also shows "Change Start Date" to recalculate the spread from a new initial date.
 - Spreads no longer appear in the Assets tab or in "Update All" downloads — spread names are excluded from the `symbols` table.
 - Spread yellow legend now shows % symbol after values and includes the spread difference (e.g. "BTC-USD:105.00%  ETH-USD:102.00%  Spread:+3.00%").
+- Overlay indicator values (e.g. EMA 200, EMA 100, EMA 50) now appear in the yellow OHLCV legend on mouse hover.
 - Spread chart style defaults to Line; volume is hidden for spreads.
 - Series2 data stored in separate `series2` column in the symbol's bars table (with auto-migration via ALTER TABLE).
 - Spread line colors and asset names stored in settings table via `save_spread_lines` / `load_spread_lines`.

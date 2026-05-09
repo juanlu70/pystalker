@@ -1043,9 +1043,21 @@ class ChartView(QWidget):
                         self.info_text.setText(f"{date_str}  {self.spread_symbol1}:{v1:.2f}%  {self.spread_symbol2}:{v2:.2f}%  Spread:{v1-v2:+.2f}%")
                     elif self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
                         ha = self._ha_df
-                        self.info_text.setText(f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
+                        info = f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}"
+                        for ol in self.overlay_lines:
+                            if ol.visible and x_idx < len(ol.plot_line.data):
+                                val = ol.plot_line.data[x_idx]
+                                if not np.isnan(val):
+                                    info += f"  {ol.plot_line.name}:{val:.2f}"
+                        self.info_text.setText(info)
                     else:
-                        self.info_text.setText(f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
+                        info = f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}"
+                        for ol in self.overlay_lines:
+                            if ol.visible and x_idx < len(ol.plot_line.data):
+                                val = ol.plot_line.data[x_idx]
+                                if not np.isnan(val):
+                                    info += f"  {ol.plot_line.name}:{val:.2f}"
+                        self.info_text.setText(info)
                     self.update_info_position()
         
         if mouse_point and self.drawing_trendline and len(self.trendline_points) == 1:
