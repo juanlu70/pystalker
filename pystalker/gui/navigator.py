@@ -1,51 +1,81 @@
 """
-PyStalker - Asset Navigator Panel
+PyStalker - Asset Navigator Panel with Spreads tab
 """
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QTabWidget,
     QListWidget, QListWidgetItem, QPushButton, QMenu
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QAction
 
+
 class AssetNavigator(QWidget):
     asset_selected = pyqtSignal(str)
+    spread_selected = pyqtSignal(str)
+    spread_removed = pyqtSignal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.assets = []
+        self.spreads = []
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         
-        search_layout = QHBoxLayout()
+        self.tabs = QTabWidget()
         
+        # Assets tab
+        assets_widget = QWidget()
+        assets_layout = QVBoxLayout(assets_widget)
+        assets_layout.setContentsMargins(0, 0, 0, 0)
+        
+        search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Filter assets...")
         self.search_input.textChanged.connect(self.filter_assets)
         search_layout.addWidget(self.search_input)
-        layout.addLayout(search_layout)
+        assets_layout.addLayout(search_layout)
         
         self.asset_list = QListWidget()
         self.asset_list.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.asset_list.itemSelectionChanged.connect(self.on_selection_changed)
         self.asset_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.asset_list.customContextMenuRequested.connect(self.show_context_menu)
-        layout.addWidget(self.asset_list)
+        assets_layout.addWidget(self.asset_list)
         
         button_layout = QHBoxLayout()
-        
         add_button = QPushButton("Add")
         add_button.clicked.connect(self.on_add_asset)
         button_layout.addWidget(add_button)
-        
         remove_button = QPushButton("Remove")
         remove_button.clicked.connect(self.on_remove_asset)
         button_layout.addWidget(remove_button)
+        assets_layout.addLayout(button_layout)
         
-        layout.addLayout(button_layout)
+        self.tabs.addTab(assets_widget, "Assets")
+        
+        # Spreads tab
+        spreads_widget = QWidget()
+        spreads_layout = QVBoxLayout(spreads_widget)
+        spreads_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.spread_list = QListWidget()
+        self.spread_list.itemDoubleClicked.connect(self.on_spread_double_clicked)
+        self.spread_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.spread_list.customContextMenuRequested.connect(self.show_spread_context_menu)
+        spreads_layout.addWidget(self.spread_list)
+        
+        spread_button_layout = QHBoxLayout()
+        remove_spread_button = QPushButton("Remove")
+        remove_spread_button.clicked.connect(self.on_remove_spread)
+        spread_button_layout.addWidget(remove_spread_button)
+        spreads_layout.addLayout(spread_button_layout)
+        
+        self.tabs.addTab(spreads_widget, "Spreads")
+        
+        layout.addWidget(self.tabs)
     
     def add_asset(self, symbol: str):
         if symbol not in self.assets:
@@ -94,18 +124,51 @@ class AssetNavigator(QWidget):
         item = self.asset_list.itemAt(pos)
         if not item:
             return
-        
         menu = QMenu(self)
-        
         refresh_action = QAction("Refresh", self)
         refresh_action.triggered.connect(lambda: self.on_refresh(item.text()))
         menu.addAction(refresh_action)
-        
         remove_action = QAction("Remove", self)
         remove_action.triggered.connect(self.on_remove_asset)
         menu.addAction(remove_action)
-        
         menu.exec(self.asset_list.mapToGlobal(pos))
     
     def on_refresh(self, symbol: str):
         self.asset_selected.emit(symbol)
+    
+    def add_spread(self, name: str):
+        if name not in self.spreads:
+            self.spreads.append(name)
+            self.spread_list.addItem(QListWidgetItem(name))
+    
+    def remove_spread(self, name: str):
+        if name in self.spreads:
+            self.spreads.remove(name)
+            for i in range(self.spread_list.count()):
+                if self.spread_list.item(i).text() == name:
+                    self.spread_list.takeItem(i)
+                    break
+    
+    def on_spread_double_clicked(self, item: QListWidgetItem):
+        self.spread_selected.emit(item.text())
+    
+    def on_remove_spread(self):
+        selected = self.spread_list.selectedItems()
+        if selected:
+            item = selected[0]
+            name = item.text()
+            self.spreads.remove(name)
+            self.spread_list.takeItem(self.spread_list.row(item))
+            self.spread_removed.emit(name)
+            return name
+        return None
+    
+    def show_spread_context_menu(self, pos):
+        item = self.spread_list.itemAt(pos)
+        if not item:
+            return
+        menu = QMenu(self)
+        remove_action = QAction("Remove", self)
+        remove_action.clicked.connect(self.on_remove_spread)
+        menu.addAction(remove_action)
+        menu.exec(self.spread_list.mapToGlobal(pos))

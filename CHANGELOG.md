@@ -79,13 +79,34 @@
 - Draw mode cursor changed to bright crosshair (#FFFFFF + #FFAA00) visible on dark backgrounds.
 - Drawing tool icons (trend, horizontal, vertical) brightened to #00BFFF for dark mode visibility.
 - Download toolbar icon brightened for dark mode.
-- Color box in Edit Drawings dialog is now clickable — opens color picker directly.
-- Dragging a trendline body (not endpoints) now moves the entire trendline while preserving its slope, extension, and point references. Endpoint drags still change slope/extension individually.
-- HLine and VLine can only be dragged from their control circle endpoint, not the line body.
-- Right-click context menu on drawings now has "Copy Drawing" option — creates a displaced copy (2% right, 3% down in view coordinates) that can be moved to the desired position.
+- Copy Drawing in context menu creates a displaced copy; snap is always set to None on copies.
+- Added File → Create Spread: creates a percent-normalized comparison of two assets starting at 100, displayed as two line indicators in a stacked panel.
+- Navigator now has Assets and Spreads tabs; spreads are saved in the database and persist across sessions.
 - Double-click on drawings opens settings dialog (via viewport eventFilter with proper coordinate mapping using mapToScene).
 - Stacked indicator title text now visible on startup (showEvent triggers repositioning for background tabs).
 
 2026-04-23
+
+2026-05-05
+
+- Spreads are fully independent charts with their own database tables (bars, settings, drawings).
+- Spread data (both series) is saved to the database and restored on session restart without needing source assets loaded.
+- Spread chart renders two native lines (Asset1 and Asset2) starting at 100, both are core parts of the chart — not overlay indicators.
+- Spread legend shows each asset name in its line color (blue for Asset1, red for Asset2) in the upper-left corner.
+- Spread OHLC legend shows "symbol1:value  symbol2:value" instead of O/H/L/C/V, positioned below the color legend.
+- Right-click context menu on spreads shows "Change [Asset1] Color" and "Change [Asset2] Color" instead of bull/bear colors.
+- Right-click context menu on spreads also shows "Change Start Date" to recalculate the spread from a new initial date.
+- Spreads no longer appear in the Assets tab or in "Update All" downloads — spread names are excluded from the `symbols` table.
+- Spread yellow legend now shows % symbol after values and includes the spread difference (e.g. "BTC-USD:105.00%  ETH-USD:102.00%  Spread:+3.00%").
+- Spread chart style defaults to Line; volume is hidden for spreads.
+- Series2 data stored in separate `series2` column in the symbol's bars table (with auto-migration via ALTER TABLE).
+- Spread line colors and asset names stored in settings table via `save_spread_lines` / `load_spread_lines`.
+- `BarData` now has `is_spread`, `spread_symbol1/2`, `spread_color1/2` fields.
+- `ChartView` now has `is_spread`, `spread_symbol1/2`, `spread_color1/2`, `spread_curve2`, `line_color` attributes.
+- Chart style 'line' renders two lines for spreads with a pyqtgraph legend showing both asset names.
+- Deleting a spread from the navigator also removes its database tables and in-memory asset data.
+- Fixed `NameError: pd` in `on_spread_selected` — added `import pandas as pd` and `import numpy as np` at module level.
+- Fixed duplicate `on_current_changed` method in `ChartTabWidget` — merged into single method that handles both tab visibility and signal emission.
+- Added `pandas` and `numpy` as top-level imports in `main_window.py`.
 
 

@@ -154,7 +154,15 @@ class ChartTab(QWidget):
             self.clear_indicator_panels()
     
     def on_colors_changed(self):
-        pass
+        if self.symbol and self.chart_view.is_spread:
+            from ..core.database import Database
+            db = Database()
+            db.save_spread_lines(self.symbol,
+                                 self.chart_view.spread_symbol1,
+                                 self.chart_view.spread_symbol2,
+                                 self.chart_view.spread_color1,
+                                 self.chart_view.spread_color2)
+            db.close()
     
     def on_indicator_visibility_changed(self, unique_name: str, visible: bool):
         """Called when visibility is toggled from the chart legend"""
@@ -224,6 +232,12 @@ class ChartTabWidget(QTabWidget):
                     tab.chart_view.adjust_volume_height()
         self.current_changed.emit(index)
     
+    def get_current_tab(self) -> ChartTab:
+        index = self.currentIndex()
+        if index >= 0:
+            return self.widget(index)
+        return None
+    
     def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True):
         if symbol in self.tabs:
             tab = self.tabs[symbol]
@@ -234,7 +248,7 @@ class ChartTabWidget(QTabWidget):
         
         tab = ChartTab()
         tab.chart_view.colors_changed.connect(
-            lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color)
+            lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color) if not tab.chart_view.is_spread else None
         )
         tab.indicatorPanelDoubleClicked.connect(self.indicatorPanelDoubleClicked.emit)
         self.tabs[symbol] = tab
@@ -242,12 +256,6 @@ class ChartTabWidget(QTabWidget):
         if set_current:
             self.setCurrentIndex(index)
         return tab, True
-    
-    def get_current_tab(self) -> ChartTab:
-        index = self.currentIndex()
-        if index >= 0:
-            return self.widget(index)
-        return None
     
     def get_current_symbol(self) -> str:
         tab = self.get_current_tab()
@@ -262,9 +270,6 @@ class ChartTabWidget(QTabWidget):
             del self.tabs[symbol]
             self.removeTab(index)
             self.chart_closed.emit(symbol)
-    
-    def on_current_changed(self, index):
-        self.current_changed.emit(index)
     
     def get_open_tabs(self) -> list:
         return list(self.tabs.keys())

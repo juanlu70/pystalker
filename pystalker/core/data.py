@@ -36,6 +36,11 @@ class BarData:
         self.symbol = symbol
         self.bars: List[Bar] = []
         self._df: Optional[pd.DataFrame] = None
+        self.is_spread = False
+        self.spread_symbol1 = ''
+        self.spread_symbol2 = ''
+        self.spread_color1 = '#00BFFF'
+        self.spread_color2 = '#FF6B6B'
         
     def count(self) -> int:
         return len(self.bars)

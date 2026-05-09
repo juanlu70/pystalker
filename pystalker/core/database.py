@@ -47,6 +47,15 @@ class Database:
             )
         ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS spreads (
+                name TEXT PRIMARY KEY,
+                symbol1 TEXT NOT NULL,
+                symbol2 TEXT NOT NULL,
+                start_date TEXT NOT NULL
+            )
+        ''')
+        
         self.conn.commit()
         
         self._migrate_old_schema()
@@ -191,9 +200,15 @@ class Database:
                 high REAL NOT NULL,
                 low REAL NOT NULL,
                 close REAL NOT NULL,
-                volume REAL
+                volume REAL,
+                series2 REAL
             )
         ''')
+        
+        try:
+            cursor.execute(f'ALTER TABLE {bars_table} ADD COLUMN series2 REAL')
+        except sqlite3.OperationalError:
+            pass
         
         settings_table = f'"{symbol}_settings"'
         cursor.execute(f'''
@@ -226,24 +241,44 @@ class Database:
         bars_table = f'"{symbol}_bars"'
         cursor.execute(f'DELETE FROM {bars_table}')
         
-        for bar in bar_data.bars:
-            cursor.execute(f'''
-                INSERT OR REPLACE INTO {bars_table}
-                (timestamp, open, high, low, close, volume)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                int(bar.date.timestamp()),
-                bar.open,
-                bar.high,
-                bar.low,
-                bar.close,
-                bar.volume
-            ))
+        df = bar_data.to_dataframe()
+        has_series2 = 'Series2' in df.columns
+        series2_values = df['Series2'].values if has_series2 else None
         
-        cursor.execute('''
-            INSERT OR REPLACE INTO symbols (symbol, last_updated, interval)
-            VALUES (?, ?, ?)
-        ''', (symbol, int(datetime.now().timestamp()), interval))
+        for i, bar in enumerate(bar_data.bars):
+            if has_series2 and series2_values is not None and i < len(series2_values):
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {bars_table}
+                    (timestamp, open, high, low, close, volume, series2)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    int(bar.date.timestamp()),
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    float(series2_values[i]) if series2_values[i] is not None and not (isinstance(series2_values[i], float) and pd.isna(series2_values[i])) else None
+                ))
+            else:
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO {bars_table}
+                    (timestamp, open, high, low, close, volume)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    int(bar.date.timestamp()),
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume
+                ))
+        
+        if not bar_data.is_spread:
+            cursor.execute('''
+                INSERT OR REPLACE INTO symbols (symbol, last_updated, interval)
+                VALUES (?, ?, ?)
+            ''', (symbol, int(datetime.now().timestamp()), interval))
         
         self.conn.commit()
     
@@ -253,11 +288,22 @@ class Database:
         cursor = self.conn.cursor()
         
         bars_table = f'"{symbol}_bars"'
-        cursor.execute(f'''
-            SELECT timestamp, open, high, low, close, volume
-            FROM {bars_table}
-            ORDER BY timestamp ASC
-        ''')
+        cursor.execute(f'PRAGMA table_info({bars_table})')
+        columns = [row[1] for row in cursor.fetchall()]
+        has_series2 = 'series2' in columns
+        
+        if has_series2:
+            cursor.execute(f'''
+                SELECT timestamp, open, high, low, close, volume, series2
+                FROM {bars_table}
+                ORDER BY timestamp ASC
+            ''')
+        else:
+            cursor.execute(f'''
+                SELECT timestamp, open, high, low, close, volume
+                FROM {bars_table}
+                ORDER BY timestamp ASC
+            ''')
         
         rows = cursor.fetchall()
         
@@ -265,6 +311,7 @@ class Database:
             return None
         
         bar_data = BarData(symbol)
+        series2_values = []
         
         for row in rows:
             bar = Bar(
@@ -276,6 +323,30 @@ class Database:
                 volume=float(row[5]) if row[5] else 0.0
             )
             bar_data.bars.append(bar)
+            if has_series2 and len(row) > 6 and row[6] is not None:
+                series2_values.append(float(row[6]))
+        
+        if has_series2 and series2_values:
+            df = bar_data.to_dataframe()
+            n = min(len(series2_values), len(df))
+            s2_arr = [float('nan')] * len(df)
+            for i in range(n):
+                s2_arr[i] = series2_values[i]
+            df['Series2'] = s2_arr
+            bar_data._df = df
+            bar_data.is_spread = True
+        
+        if bar_data.is_spread:
+            settings_table = f'"{symbol}_settings"'
+            cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('spread_lines',))
+            row_s = cursor.fetchone()
+            if row_s:
+                import json
+                info = json.loads(row_s[0])
+                bar_data.spread_symbol1 = info.get('symbol1', '')
+                bar_data.spread_symbol2 = info.get('symbol2', '')
+                bar_data.spread_color1 = info.get('color1', '#00BFFF')
+                bar_data.spread_color2 = info.get('color2', '#FF6B6B')
         
         return bar_data
     
@@ -517,6 +588,48 @@ class Database:
             })
         
         return drawings
+    
+    def save_spread(self, name: str, symbol1: str, symbol2: str, start_date: str):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO spreads (name, symbol1, symbol2, start_date)
+            VALUES (?, ?, ?, ?)
+        ''', (name, symbol1, symbol2, start_date))
+        self.conn.commit()
+    
+    def load_spread(self, name: str) -> Optional[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT name, symbol1, symbol2, start_date FROM spreads WHERE name = ?', (name,))
+        row = cursor.fetchone()
+        if row:
+            return {'name': row[0], 'symbol1': row[1], 'symbol2': row[2], 'start_date': row[3]}
+        return None
+    
+    def load_spreads(self) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT name, symbol1, symbol2, start_date FROM spreads ORDER BY name')
+        return [{'name': row[0], 'symbol1': row[1], 'symbol2': row[2], 'start_date': row[3]} for row in cursor.fetchall()]
+    
+    def delete_spread(self, name: str):
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM spreads WHERE name = ?', (name,))
+        self.conn.commit()
+    
+    def save_spread_lines(self, symbol: str, symbol1: str, symbol2: str, color1: str, color2: str):
+        self._ensure_symbol_tables(symbol)
+        import json
+        cursor = self.conn.cursor()
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('spread_lines', json.dumps({
+            'symbol1': symbol1,
+            'symbol2': symbol2,
+            'color1': color1,
+            'color2': color2
+        })))
+        self.conn.commit()
     
     def close(self):
         if self.conn:

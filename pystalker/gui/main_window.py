@@ -3,6 +3,8 @@ PyStalker - Main Window
 Porting of Qtstalker to Python/PyQt6
 """
 from pathlib import Path
+import pandas as pd
+import numpy as np
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTabWidget, QMenuBar, QMenu, QToolBar, QStatusBar, QProgressBar,
@@ -206,6 +208,8 @@ class PyStalkerWindow(QMainWindow):
         self.navigator.setMinimumWidth(200)
         self.navigator.setMaximumWidth(400)
         self.navigator.asset_selected.connect(self.on_asset_selected)
+        self.navigator.spread_selected.connect(self.on_spread_selected)
+        self.navigator.spread_removed.connect(self.on_spread_removed)
         main_splitter.addWidget(self.navigator)
         
         self.chart_tabs = ChartTabWidget()
@@ -248,6 +252,12 @@ class PyStalkerWindow(QMainWindow):
         import_csv = QAction(load_icon('import'), "Import CSV...", self)
         import_csv.triggered.connect(self.on_import_csv)
         file_menu.addAction(import_csv)
+        
+        file_menu.addSeparator()
+        
+        create_spread_action = QAction("Create Spread...", self)
+        create_spread_action.triggered.connect(self.on_create_spread)
+        file_menu.addAction(create_spread_action)
         
         file_menu.addSeparator()
         
@@ -456,6 +466,151 @@ class PyStalkerWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to import CSV: {e}")
     
+    def on_create_spread(self):
+        from .spread_dialog import SpreadDialog
+        symbols = self.assets.get_symbols()
+        if len(symbols) < 2:
+            QMessageBox.information(self, "Create Spread", "You need at least 2 assets loaded to create a spread.")
+            return
+        spreads = self.database.load_spreads()
+        dialog = SpreadDialog(symbols, spreads, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            symbol1 = dialog.get_symbol1()
+            symbol2 = dialog.get_symbol2()
+            start_date = dialog.get_start_date()
+            spread_name = dialog.get_spread_name()
+            self.database.save_spread(spread_name, symbol1, symbol2, start_date)
+            self.navigator.add_spread(spread_name)
+            self.on_spread_selected(spread_name)
+    
+    def on_spread_selected(self, name: str):
+        spread = self.database.load_spread(name)
+        if not spread:
+            return
+        symbol1 = spread['symbol1']
+        symbol2 = spread['symbol2']
+        start_date = spread['start_date']
+        
+        asset1 = self.assets.get_asset(symbol1)
+        asset2 = self.assets.get_asset(symbol2)
+        if not asset1:
+            cached = self.database.load_bars(symbol1)
+            if cached:
+                self.assets.add_asset(symbol1, cached)
+                asset1 = cached
+        if not asset2:
+            cached = self.database.load_bars(symbol2)
+            if cached:
+                self.assets.add_asset(symbol2, cached)
+                asset2 = cached
+        if not asset1 or not asset2:
+            QMessageBox.warning(self, "Spread", f"Asset data not found. Please load {symbol1} and {symbol2} first.")
+            return
+        
+        from ..core.spread import calculate_spread
+        result = calculate_spread(asset1.to_dataframe(), asset2.to_dataframe(), start_date)
+        if result is None:
+            QMessageBox.warning(self, "Spread", "No overlapping data found for the selected assets and date range.")
+            return
+        
+        dates, series1, series2 = result
+        
+        s1 = series1.values
+        s2 = series2.values
+        
+        spread_df = pd.DataFrame({
+            'Open': s1,
+            'High': np.maximum(s1, s2),
+            'Low': np.minimum(s1, s2),
+            'Close': s1,
+            'Volume': 0,
+            'Series2': s2
+        }, index=dates)
+        
+        from ..core.data import BarData, Bar
+        bars = []
+        for i in range(len(spread_df)):
+            idx = spread_df.index[i]
+            if hasattr(idx, 'to_pydatetime'):
+                dt = idx.to_pydatetime()
+            else:
+                from datetime import datetime
+                dt = datetime.fromtimestamp(int(idx))
+            bars.append(Bar(
+                date=dt,
+                open=float(spread_df['Open'].iloc[i]),
+                high=float(spread_df['High'].iloc[i]),
+                low=float(spread_df['Low'].iloc[i]),
+                close=float(spread_df['Close'].iloc[i]),
+                volume=0.0
+            ))
+        bar_data = BarData(name)
+        bar_data.bars = bars
+        bar_data.is_spread = True
+        bar_data.spread_symbol1 = symbol1
+        bar_data.spread_symbol2 = symbol2
+        bar_data._df = spread_df
+        self.assets.add_asset(name, bar_data)
+        
+        self.database.save_bars(bar_data)
+        self.database.save_spread_lines(name, symbol1, symbol2, '#00BFFF', '#FF6B6B')
+        
+        existing_tab = self.chart_tabs.tabs.get(name)
+        if existing_tab:
+            self.chart_tabs.setCurrentWidget(existing_tab)
+            return
+        
+        self.load_chart(name)
+        
+        for s, action in self.chart_style_actions.items():
+            action.setChecked(s == 'line')
+    
+    def on_spread_removed(self, name: str):
+        self.database.delete_spread(name)
+        self.database.delete_symbol(name)
+        self.assets.remove_asset(name)
+    
+    def on_spread_start_date_change(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol or not tab.chart_view.is_spread:
+            return
+        name = tab.symbol
+        spread = self.database.load_spread(name)
+        if not spread:
+            return
+        
+        from PyQt6.QtWidgets import QDateEdit, QDialog, QVBoxLayout, QDialogButtonBox
+        from PyQt6.QtCore import QDate
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Change Start Date")
+        layout = QVBoxLayout(dialog)
+        date_edit = QDateEdit()
+        date_edit.setCalendarPopup(True)
+        current_date = QDate.fromString(spread['start_date'], "yyyy-MM-dd")
+        if not current_date.isValid():
+            current_date = QDate.currentDate().addYears(-1)
+        date_edit.setDate(current_date)
+        date_edit.setDisplayFormat("yyyy-MM-dd")
+        layout.addWidget(date_edit)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        new_date = date_edit.date().toString("yyyy-MM-dd")
+        self.database.save_spread(name, spread['symbol1'], spread['symbol2'], new_date)
+        
+        if name in self.chart_tabs.tabs:
+            del self.chart_tabs.tabs[name]
+            idx = self.chart_tabs.indexOf(tab)
+            self.chart_tabs.removeTab(idx)
+        self.assets.remove_asset(name)
+        self.database.delete_symbol(name)
+        
+        self.on_spread_selected(name)
+    
     def on_update_all(self):
         symbols = self.database.get_symbols()
         if not symbols:
@@ -573,6 +728,17 @@ class PyStalkerWindow(QMainWindow):
         
         tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
         tab.chart_view.drawingDoubleClicked.connect(self.on_drawing_double_clicked)
+        tab.chart_view.spreadStartDateChangeRequested.connect(self.on_spread_start_date_change)
+        
+        if asset.is_spread:
+            tab.chart_view.is_spread = True
+            tab.chart_view.spread_symbol1 = asset.spread_symbol1
+            tab.chart_view.spread_symbol2 = asset.spread_symbol2
+            tab.chart_view.spread_color1 = asset.spread_color1
+            tab.chart_view.spread_color2 = asset.spread_color2
+            tab.chart_view.line_color = asset.spread_color1
+            tab.chart_view.chart_style = 'line'
+            self.database.save_chart_style(symbol, 'line')
         
         tab.load_data(df, symbol, interval)
         
@@ -928,6 +1094,9 @@ class PyStalkerWindow(QMainWindow):
         symbols = self.database.get_symbols()
         for symbol in symbols:
             self.navigator.add_asset(symbol)
+        spreads = self.database.load_spreads()
+        for spread in spreads:
+            self.navigator.add_spread(spread['name'])
     
     def save_session(self):
         open_tabs = self.chart_tabs.get_open_tabs()
