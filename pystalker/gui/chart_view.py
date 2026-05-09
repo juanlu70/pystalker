@@ -215,6 +215,7 @@ class ChartView(QWidget):
     range_changed = pyqtSignal(float, float, object)
     colors_changed = pyqtSignal()
     chartStyleChanged = pyqtSignal(str)
+    spreadStartDateChangeRequested = pyqtSignal()
     drawModeToggled = pyqtSignal(bool)
     drawingDoubleClicked = pyqtSignal(object)
     
@@ -222,6 +223,13 @@ class ChartView(QWidget):
         super().__init__(parent)
         self.df = None
         self.symbol = None
+        self.is_spread = False
+        self.spread_symbol1 = ''
+        self.spread_symbol2 = ''
+        self.spread_color1 = '#00BFFF'
+        self.spread_color2 = '#FF6B6B'
+        self.spread_legend1 = None
+        self.spread_legend2 = None
         self.overlay_lines = []
         self.indicator_curves = []
         self.drawings = []
@@ -238,6 +246,7 @@ class ChartView(QWidget):
         self.bull_color = '#55aaff'
         self.bear_color = '#ef5350'
         self.chart_style = 'candlestick'
+        self.line_color = '#4a90d9'
         self._drawing_context_hit = None
         self._ignore_context_menu = False
         self._draw_mode = False
@@ -427,29 +436,62 @@ class ChartView(QWidget):
         
         menu = QMenu(self)
         
-        change_bull_color = menu.addAction("Change Bull Color")
-        change_bear_color = menu.addAction("Change Bear Color")
+        if self.is_spread:
+            change_color1 = menu.addAction(f"Change {self.spread_symbol1} Color")
+            change_color2 = menu.addAction(f"Change {self.spread_symbol2} Color")
+            menu.addSeparator()
+            change_start_date = menu.addAction("Change Start Date")
+        else:
+            change_bull_color = menu.addAction("Change Bull Color")
+            change_bear_color = menu.addAction("Change Bear Color")
         
         action = menu.exec(self.plot_widget.mapToGlobal(pos))
         
-        if action == change_bull_color:
-            menu.close()
-            self._ignore_context_menu = True
-            color = QColorDialog.getColor(pg.QtGui.QColor(self.bull_color), self, "Select Bull Color")
-            if color.isValid():
-                self.bull_color = color.name()
-                self.plot_candlesticks(self.df, self.symbol)
-                self.colors_changed.emit()
-            QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
-        elif action == change_bear_color:
-            menu.close()
-            self._ignore_context_menu = True
-            color = QColorDialog.getColor(pg.QtGui.QColor(self.bear_color), self, "Select Bear Color")
-            if color.isValid():
-                self.bear_color = color.name()
-                self.plot_candlesticks(self.df, self.symbol)
-                self.colors_changed.emit()
-            QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+        if self.is_spread:
+            if action == change_color1:
+                menu.close()
+                self._ignore_context_menu = True
+                color = QColorDialog.getColor(pg.QtGui.QColor(self.spread_color1), self, f"Select {self.spread_symbol1} Color")
+                if color.isValid():
+                    self.spread_color1 = color.name()
+                    self.line_color = color.name()
+                    if self.spread_legend1:
+                        self.spread_legend1.setColor(color.name())
+                    self.plot_candlesticks(self.df, self.symbol)
+                    self.colors_changed.emit()
+                QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+            elif action == change_color2:
+                menu.close()
+                self._ignore_context_menu = True
+                color = QColorDialog.getColor(pg.QtGui.QColor(self.spread_color2), self, f"Select {self.spread_symbol2} Color")
+                if color.isValid():
+                    self.spread_color2 = color.name()
+                    if self.spread_legend2:
+                        self.spread_legend2.setColor(color.name())
+                    self.plot_candlesticks(self.df, self.symbol)
+                    self.colors_changed.emit()
+                QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+            elif action == change_start_date:
+                self.spreadStartDateChangeRequested.emit()
+        else:
+            if action == change_bull_color:
+                menu.close()
+                self._ignore_context_menu = True
+                color = QColorDialog.getColor(pg.QtGui.QColor(self.bull_color), self, "Select Bull Color")
+                if color.isValid():
+                    self.bull_color = color.name()
+                    self.plot_candlesticks(self.df, self.symbol)
+                    self.colors_changed.emit()
+                QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+            elif action == change_bear_color:
+                menu.close()
+                self._ignore_context_menu = True
+                color = QColorDialog.getColor(pg.QtGui.QColor(self.bear_color), self, "Select Bear Color")
+                if color.isValid():
+                    self.bear_color = color.name()
+                    self.plot_candlesticks(self.df, self.symbol)
+                    self.colors_changed.emit()
+                QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
     
     def set_colors(self, bull_color: str, bear_color: str):
         self.bull_color = bull_color
@@ -995,7 +1037,11 @@ class ChartView(QWidget):
                         date_str = date_str.strftime('%Y-%m-%d')
                     else:
                         date_str = str(date_str)[:10]
-                    if self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
+                    if self.is_spread:
+                        v1 = self.df['Close'].iloc[x_idx]
+                        v2 = self.df['Series2'].iloc[x_idx] if 'Series2' in self.df.columns else 0
+                        self.info_text.setText(f"{date_str}  {self.spread_symbol1}:{v1:.2f}%  {self.spread_symbol2}:{v2:.2f}%  Spread:{v1-v2:+.2f}%")
+                    elif self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
                         ha = self._ha_df
                         self.info_text.setText(f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}")
                     else:
@@ -1091,6 +1137,9 @@ class ChartView(QWidget):
         self.plot_widget.clear()
         self.candlestick_item = None
         self.line_curve = None
+        self.spread_curve2 = None
+        self.spread_legend1 = None
+        self.spread_legend2 = None
         self.volume_item = None
         self.indicator_curves.clear()
         
@@ -1136,9 +1185,20 @@ class ChartView(QWidget):
             self._ha_df = None
             x = np.arange(len(df))
             y = df['Close'].values.astype(float)
-            self.line_curve = pg.PlotDataItem(x, y, pen=pg.mkPen(color='#4a90d9', width=2))
+            self.line_curve = pg.PlotDataItem(x, y, pen=pg.mkPen(color=self.line_color, width=2), name=self.spread_symbol1 if self.is_spread else None)
             self.plot_widget.addItem(self.line_curve)
             self.candlestick_item = None
+            if self.is_spread and 'Series2' in df.columns:
+                y2 = df['Series2'].values.astype(float)
+                self.spread_curve2 = pg.PlotDataItem(x, y2, pen=pg.mkPen(color=self.spread_color2, width=2), name=self.spread_symbol2)
+                self.plot_widget.addItem(self.spread_curve2)
+                self.spread_legend1 = pg.TextItem(self.spread_symbol1, color=self.spread_color1, anchor=(0, 0))
+                self.spread_legend1.setFont(pg.QtGui.QFont('monospace', 10, pg.QtGui.QFont.Weight.Bold))
+                self.spread_legend2 = pg.TextItem(self.spread_symbol2, color=self.spread_color2, anchor=(0, 0))
+                self.spread_legend2.setFont(pg.QtGui.QFont('monospace', 10, pg.QtGui.QFont.Weight.Bold))
+                self.plot_widget.addItem(self.spread_legend1, ignoreBounds=True)
+                self.plot_widget.addItem(self.spread_legend2, ignoreBounds=True)
+                self._update_spread_legend_position()
         elif self.chart_style == 'heikin_ashi':
             ha_df = self._heikin_ashi_df(df)
             self._ha_df = ha_df
@@ -1167,7 +1227,7 @@ class ChartView(QWidget):
             self.candlestick_item = CandlestickItem(candle_data, self.bull_color, self.bear_color)
             self.plot_widget.addItem(self.candlestick_item)
         
-        if 'Volume' in df.columns:
+        if 'Volume' in df.columns and not self.is_spread:
             vol_df = self._ha_df if (self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None) else df
             volume_data = []
             for i in range(len(df)):
@@ -1202,6 +1262,7 @@ class ChartView(QWidget):
             self.set_initial_y_range()
             self.update_date_ticks()
             self.update_info_position()
+            self._update_spread_legend_position()
             self.adjust_volume_height()
         else:
             self._needs_view_reset = True
@@ -1255,6 +1316,8 @@ class ChartView(QWidget):
                 offset = 1.5 * font_pixels * pts_per_pixel
             else:
                 offset = y_range * 0.03
+            if self.is_spread:
+                offset *= 4
             self.info_text.setPos(x_min + 2, y_max - offset)
     
     def update_ohlc_legend(self):
@@ -1278,6 +1341,26 @@ class ChartView(QWidget):
     def update_ohlc_legend_position(self):
         try:
             self.update_info_position()
+        except Exception:
+            pass
+        self._update_spread_legend_position()
+    
+    def _update_spread_legend_position(self):
+        if not self.is_spread or self.spread_legend1 is None:
+            return
+        try:
+            view_range = self.view_box.viewRange()
+            x_min = view_range[0][0]
+            y_max = view_range[1][1]
+            y_range = y_max - view_range[1][0]
+            view_height = self.height() if self.height() > 0 else 800
+            pts_per_pixel = y_range / view_height
+            font_size = 10
+            font_pixels = font_size * 1.333
+            gap = 1.5 * font_pixels * pts_per_pixel
+            self.spread_legend1.setPos(x_min + 2, y_max - gap)
+            if self.spread_legend2:
+                self.spread_legend2.setPos(x_min + 2, y_max - gap * 2)
         except Exception:
             pass
     
