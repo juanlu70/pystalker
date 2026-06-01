@@ -3,6 +3,7 @@ PyStalker - Technical Indicators using TA-Lib
 """
 import numpy as np
 import pandas as pd
+import warnings
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -47,6 +48,8 @@ class IndicatorManager:
         'EMA': {'func': 'EMA', 'params': {'period': 20}, 'type': Indicator.OVERLAY},
         'BBANDS': {'func': 'BBANDS', 'params': {'period': 20, 'nbdevup': 2, 'nbdevdn': 2}, 'type': Indicator.OVERLAY},
         'SAR': {'func': 'SAR', 'params': {'acceleration': 0.02, 'maximum': 0.2}, 'type': Indicator.OVERLAY},
+        'ML Predict (Random Forest)': {'func': 'ML_PREDICT_RF', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
+        'ML Predict (XGBoost)': {'func': 'ML_PREDICT_XGB', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
     }
     
     SEPARATE_INDICATORS = {
@@ -69,6 +72,8 @@ class IndicatorManager:
     LINE_DEFAULTS = {
         'SMA': [{'name': 'SMA', 'color': '#00BFFF'}],
         'EMA': [{'name': 'EMA', 'color': '#FFD700'}],
+        'ML Predict (Random Forest)': [{'name': 'Predicted', 'color': '#E040FB'}, {'name': 'Future', 'color': '#FF6EC7'}],
+        'ML Predict (XGBoost)': [{'name': 'Predicted', 'color': '#00E676'}, {'name': 'Future', 'color': '#76FF03'}],
         'BBANDS': [
             {'name': 'Upper', 'color': '#FF6B6B'},
             {'name': 'Middle', 'color': '#4ECDC4'},
@@ -124,6 +129,20 @@ class IndicatorManager:
     def calculate_indicator(name: str, data: pd.DataFrame, params: Dict = None, colors: Dict = None) -> Optional[Indicator]:
         if name not in IndicatorManager.ALL_INDICATORS:
             return None
+        
+        if name == 'ML Predict (Random Forest)':
+            default_params = IndicatorManager.ALL_INDICATORS[name]['params'].copy()
+            if params:
+                default_params.update(params)
+            result = _calculate_ml_predict(data, default_params, colors or {}, model_type='rf')
+            return result
+        
+        if name == 'ML Predict (XGBoost)':
+            default_params = IndicatorManager.ALL_INDICATORS[name]['params'].copy()
+            if params:
+                default_params.update(params)
+            result = _calculate_ml_predict(data, default_params, colors or {}, model_type='xgb')
+            return result
         
         if not TALIB_AVAILABLE:
             raise ImportError("TA-Lib is not installed. Install with: pip install TA-Lib")
@@ -242,3 +261,200 @@ class IndicatorManager:
             return indicator
         except Exception:
             return None
+
+
+def _build_ml_features(data: pd.DataFrame):
+    n = len(data)
+    close = data['Close'].values.astype(float)
+    high = data['High'].values.astype(float)
+    low = data['Low'].values.astype(float)
+    open_price = data['Open'].values.astype(float)
+    volume = data['Volume'].values.astype(float) if 'Volume' in data.columns else np.ones(n)
+    
+    returns = np.full(n, np.nan)
+    returns[1:] = (close[1:] - close[:-1]) / close[:-1]
+    
+    sma5 = np.full(n, np.nan)
+    sma10 = np.full(n, np.nan)
+    sma20 = np.full(n, np.nan)
+    for i in range(4, n):
+        sma5[i] = np.mean(close[i-4:i+1])
+    for i in range(9, n):
+        sma10[i] = np.mean(close[i-9:i+1])
+    for i in range(19, n):
+        sma20[i] = np.mean(close[i-19:i+1])
+    
+    volatility = np.full(n, np.nan)
+    for i in range(19, n):
+        volatility[i] = np.std(returns[i-19:i+1])
+    
+    rsi = np.full(n, np.nan)
+    if TALIB_AVAILABLE:
+        try:
+            rsi_raw = talib.RSI(close, timeperiod=14)
+            if rsi_raw is not None:
+                rsi = rsi_raw
+        except Exception:
+            pass
+    
+    vol_change = np.full(n, np.nan)
+    vol_change[1:] = np.where(volume[:-1] > 0, (volume[1:] - volume[:-1]) / volume[:-1], 0)
+    
+    high_low_range = np.where((high - low) > 0, (high - low) / close, 0)
+    
+    sma5_ratio = np.where(sma20 > 0, close / sma5, np.nan)
+    sma10_ratio = np.where(sma20 > 0, close / sma10, np.nan)
+    sma20_ratio = np.where(sma20 > 0, close / sma20, np.nan)
+    rsi_norm = rsi / 100.0
+    
+    feature_matrix = np.column_stack([
+        returns, sma5_ratio, sma10_ratio, sma20_ratio,
+        volatility, rsi_norm, vol_change, high_low_range
+    ])
+    
+    return {
+        'close': close, 'high': high, 'low': low, 'open': open_price, 'volume': volume,
+        'returns': returns, 'volatility': volatility, 'rsi': rsi,
+        'high_low_range': high_low_range, 'features': feature_matrix, 'n': n,
+    }
+
+
+def _calculate_ml_predict(data: pd.DataFrame, params: dict, line_colors: dict, model_type: str = 'rf') -> Indicator:
+    lookback = int(params.get('lookback', 200))
+    horizon = int(params.get('horizon', 5))
+    
+    if model_type == 'xgb':
+        try:
+            from xgboost import XGBRegressor
+        except ImportError:
+            warnings.warn("xgboost is required for ML Predict (XGBoost) indicator")
+            return None
+        indicator_name = 'ML Predict (XGBoost)'
+    else:
+        try:
+            from sklearn.ensemble import RandomForestRegressor
+            from sklearn.preprocessing import StandardScaler
+        except ImportError:
+            warnings.warn("scikit-learn is required for ML Predict (Random Forest) indicator")
+            return None
+        indicator_name = 'ML Predict (Random Forest)'
+    
+    feat = _build_ml_features(data)
+    n = feat['n']
+    close = feat['close']
+    feature_matrix = feat['features']
+    volatility = feat['volatility']
+    rsi = feat['rsi']
+    high_low_range = feat['high_low_range']
+    returns = feat['returns']
+    
+    if n < lookback + 50:
+        return None
+    
+    target = np.full(n, np.nan)
+    target[:-1] = close[1:]
+    
+    predicted = np.full(n, np.nan)
+    
+    train_start = max(50, n - lookback)
+    
+    valid_train = np.arange(train_start, n - 1)
+    valid_mask = ~np.any(np.isnan(feature_matrix[valid_train]), axis=1) & ~np.isnan(target[valid_train])
+    train_idx = valid_train[valid_mask]
+    
+    if len(train_idx) < 30:
+        return None
+    
+    X_train = feature_matrix[train_idx]
+    y_train = target[train_idx]
+    
+    if model_type == 'xgb':
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        model = XGBRegressor(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            min_child_weight=5,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            verbosity=0,
+            n_jobs=-1
+        )
+        model.fit(X_train_scaled, y_train)
+    else:
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            min_samples_leaf=5,
+            random_state=42,
+            n_jobs=-1
+        )
+        model.fit(X_train_scaled, y_train)
+    
+    predict_from = train_start
+    predict_to = n - 1
+    predict_indices = np.arange(predict_from, predict_to)
+    
+    valid_pred_mask = ~np.any(np.isnan(feature_matrix[predict_indices]), axis=1)
+    predict_indices = predict_indices[valid_pred_mask]
+    
+    if len(predict_indices) > 0:
+        X_pred = feature_matrix[predict_indices]
+        X_pred_scaled = scaler.transform(X_pred)
+        preds = model.predict(X_pred_scaled)
+        predicted[predict_indices] = preds
+    
+    future_predicted = np.full(n + horizon, np.nan)
+    future_predicted[:n] = predicted
+    
+    last_features = feature_matrix[n - 1].reshape(1, -1)
+    if not np.any(np.isnan(last_features)):
+        last_scaled = scaler.transform(last_features)
+        next_pred = model.predict(last_scaled)[0]
+        
+        future_close = close.copy()
+        for h in range(horizon):
+            future_close = np.append(future_close, next_pred)
+            
+            f_ret = (next_pred - future_close[-2]) / future_close[-2] if future_close[-2] != 0 else 0
+            f_sma5 = np.mean(future_close[-5:])
+            f_sma10 = np.mean(future_close[-10:]) if len(future_close) >= 10 else np.mean(future_close)
+            f_sma20 = np.mean(future_close[-20:]) if len(future_close) >= 20 else np.mean(future_close)
+            f_sma5_r = next_pred / f_sma5 if f_sma5 > 0 else 1.0
+            f_sma10_r = next_pred / f_sma10 if f_sma10 > 0 else 1.0
+            f_sma20_r = next_pred / f_sma20 if f_sma20 > 0 else 1.0
+            f_vol = volatility[n - 1] if not np.isnan(volatility[n - 1]) else 0
+            f_rsi = rsi[n - 1] / 100.0 if not np.isnan(rsi[n - 1]) else 0.5
+            f_vchange = 0
+            f_hl = high_low_range[n - 1]
+            
+            f_features = np.array([[f_ret, f_sma5_r, f_sma10_r, f_sma20_r, f_vol, f_rsi, f_vchange, f_hl]])
+            f_scaled = scaler.transform(f_features)
+            next_pred = model.predict(f_scaled)[0]
+            future_predicted[n + h] = next_pred
+    
+    predicted_line = future_predicted[:n]
+    future_line = future_predicted[n - 1:]
+    
+    predicted_clean = np.where(np.isnan(predicted_line), np.nan, predicted_line)
+    future_clean = np.where(np.isnan(future_line), np.nan, future_line)
+    
+    indicator = Indicator(indicator_name, Indicator.OVERLAY)
+    indicator.parameters = params
+    indicator.add_line(PlotLine(
+        'Predicted',
+        predicted_clean,
+        line_colors.get('Predicted', '#E040FB' if model_type == 'rf' else '#00E676')
+    ))
+    indicator.add_line(PlotLine(
+        'Future',
+        future_clean,
+        line_colors.get('Future', '#FF6EC7' if model_type == 'rf' else '#76FF03')
+    ))
+    
+    return indicator

@@ -1084,10 +1084,20 @@ class PyStalkerWindow(QMainWindow):
                 item = drawing['item']
                 item.color = drawing['color']
                 item.width = drawing['width']
-                item.generatePicture()
-                item.update()
                 drawing_type = drawing.get('type', 'trendline')
-                if drawing_type != 'vline':
+                if drawing_type == 'hline':
+                    new_y = dialog.get_y()
+                    if new_y is not None:
+                        drawing['points'][0] = (0, new_y)
+                        item.setY(new_y)
+                elif drawing_type == 'vline':
+                    new_bar = dialog.get_bar()
+                    if new_bar is not None:
+                        drawing['points'][0] = (new_bar, 0)
+                        item.setX(new_bar)
+                else:
+                    item.generatePicture()
+                    item.update()
                     tab.chart_view.snap_drawing_points(drawing)
     
     def load_saved_symbols(self):

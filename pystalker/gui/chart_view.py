@@ -1254,9 +1254,9 @@ class ChartView(QWidget):
         
         for overlay_line in self.overlay_lines:
             plot_line = overlay_line.plot_line
-            n = min(len(plot_line.data), len(df))
+            n = len(plot_line.data)
             if n > 0:
-                data = plot_line.data[:n]
+                data = plot_line.data
                 valid_mask = ~np.isnan(data)
                 valid_indices = np.where(valid_mask)[0]
                 valid_data = data[valid_mask]

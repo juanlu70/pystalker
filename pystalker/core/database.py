@@ -60,6 +60,7 @@ class Database:
         
         self._migrate_old_schema()
         self._deduplicate_indicators()
+        self._rename_ml_predict()
     
     def _migrate_old_schema(self):
         cursor = self.conn.cursor()
@@ -187,6 +188,44 @@ class Database:
                     INSERT OR REPLACE INTO {settings_table} (key, value)
                     VALUES (?, ?)
                 ''', ('indicators', json.dumps(unique)))
+        self.conn.commit()
+    
+    def _rename_ml_predict(self):
+        import json
+        cursor = self.conn.cursor()
+        all_tables = []
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        for row in cursor.fetchall():
+            all_tables.append(row[0])
+        
+        for table in all_tables:
+            if not table.endswith('_settings'):
+                continue
+            cursor.execute(f'SELECT value FROM "{table}" WHERE key = ?', ('indicators',))
+            row = cursor.fetchone()
+            if not row:
+                continue
+            try:
+                indicators = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(indicators, list):
+                continue
+            
+            changed = False
+            for ind in indicators:
+                if ind.get('indicator_name') == 'ML Predict' or ind.get('name') == 'ML Predict':
+                    if 'indicator_name' in ind:
+                        ind['indicator_name'] = 'ML Predict (Random Forest)'
+                    if ind.get('name') == 'ML Predict':
+                        ind['name'] = 'ML Predict (Random Forest)'
+                    changed = True
+            
+            if changed:
+                cursor.execute(f'''
+                    INSERT OR REPLACE INTO "{table}" (key, value)
+                    VALUES (?, ?)
+                ''', ('indicators', json.dumps(indicators)))
         self.conn.commit()
 
     def _ensure_symbol_tables(self, symbol: str):
