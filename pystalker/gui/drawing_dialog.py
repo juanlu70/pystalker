@@ -302,12 +302,46 @@ class DrawingSettingsDialog(QDialog):
         
         points = self.drawing.get('points', [])
         if self.drawing_type == 'hline' and points:
-            form.addRow("Y:", QLabel(f"{points[0][1]:.2f}"))
+            self.y_spin = QDoubleSpinBox()
+            self.y_spin.setDecimals(2)
+            self.y_spin.setRange(-999999, 999999)
+            self.y_spin.setValue(points[0][1])
+            form.addRow("Y:", self.y_spin)
         elif self.drawing_type == 'vline' and points:
-            form.addRow("Bar:", QLabel(f"{int(points[0][0])}"))
+            self.bar_spin = QSpinBox()
+            self.bar_spin.setRange(0, 999999)
+            self.bar_spin.setValue(int(points[0][0]))
+            form.addRow("Bar:", self.bar_spin)
         elif len(points) >= 2:
-            form.addRow(QLabel("Point 1:"), QLabel(f"Bar: {int(points[0][0])}  Y: {points[0][1]:.2f}"))
-            form.addRow(QLabel("Point 2:"), QLabel(f"Bar: {int(points[1][0])}  Y: {points[1][1]:.2f}"))
+            self.p1x_spin = QDoubleSpinBox()
+            self.p1x_spin.setDecimals(0)
+            self.p1x_spin.setRange(0, 999999)
+            self.p1x_spin.setValue(int(points[0][0]))
+            self.p1y_spin = QDoubleSpinBox()
+            self.p1y_spin.setDecimals(2)
+            self.p1y_spin.setRange(-999999, 999999)
+            self.p1y_spin.setValue(points[0][1])
+            p1_row = QHBoxLayout()
+            p1_row.addWidget(QLabel("Bar:"))
+            p1_row.addWidget(self.p1x_spin)
+            p1_row.addWidget(QLabel("Y:"))
+            p1_row.addWidget(self.p1y_spin)
+            form.addRow("Point 1:", p1_row)
+            
+            self.p2x_spin = QDoubleSpinBox()
+            self.p2x_spin.setDecimals(0)
+            self.p2x_spin.setRange(0, 999999)
+            self.p2x_spin.setValue(int(points[1][0]))
+            self.p2y_spin = QDoubleSpinBox()
+            self.p2y_spin.setDecimals(2)
+            self.p2y_spin.setRange(-999999, 999999)
+            self.p2y_spin.setValue(points[1][1])
+            p2_row = QHBoxLayout()
+            p2_row.addWidget(QLabel("Bar:"))
+            p2_row.addWidget(self.p2x_spin)
+            p2_row.addWidget(QLabel("Y:"))
+            p2_row.addWidget(self.p2y_spin)
+            form.addRow("Point 2:", p2_row)
         
         layout.addLayout(form)
         
@@ -338,6 +372,26 @@ class DrawingSettingsDialog(QDialog):
     
     def get_width(self):
         return self.width_spin.value()
+    
+    def get_y(self):
+        if hasattr(self, 'y_spin'):
+            return self.y_spin.value()
+        return None
+    
+    def get_bar(self):
+        if hasattr(self, 'bar_spin'):
+            return self.bar_spin.value()
+        return None
+    
+    def get_point1(self):
+        if hasattr(self, 'p1x_spin'):
+            return (int(self.p1x_spin.value()), self.p1y_spin.value())
+        return None
+    
+    def get_point2(self):
+        if hasattr(self, 'p2x_spin'):
+            return (int(self.p2x_spin.value()), self.p2y_spin.value())
+        return None
     
     def _remove(self):
         self._removed = True

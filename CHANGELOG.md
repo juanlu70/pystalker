@@ -98,6 +98,8 @@
 - Right-click context menu on spreads also shows "Change Start Date" to recalculate the spread from a new initial date.
 - Spreads no longer appear in the Assets tab or in "Update All" downloads — spread names are excluded from the `symbols` table.
 - Spread yellow legend now shows % symbol after values and includes the spread difference (e.g. "BTC-USD:105.00%  ETH-USD:102.00%  Spread:+3.00%").
+- Overlay indicator values (e.g. EMA 200, EMA 100, EMA 50) now appear in the yellow OHLCV legend on mouse hover.
+- Right-click on a horizontal line → "Horizontal Line Settings" now has an editable Y spinbox; same for vertical line with an editable Bar spinbox.
 - Spread chart style defaults to Line; volume is hidden for spreads.
 - Series2 data stored in separate `series2` column in the symbol's bars table (with auto-migration via ALTER TABLE).
 - Spread line colors and asset names stored in settings table via `save_spread_lines` / `load_spread_lines`.
@@ -108,5 +110,40 @@
 - Fixed `NameError: pd` in `on_spread_selected` — added `import pandas as pd` and `import numpy as np` at module level.
 - Fixed duplicate `on_current_changed` method in `ChartTabWidget` — merged into single method that handles both tab visibility and signal emission.
 - Added `pandas` and `numpy` as top-level imports in `main_window.py`.
+
+2026-06-01
+
+- Added **ML Predict (Random Forest)** overlay indicator (renamed from "ML Predict").
+- Added **ML Predict (XGBoost)** overlay indicator using same features but XGBRegressor algorithm.
+- Both indicators share common feature engineering (extracted into `_build_ml_features`): daily returns, SMA5/10/20 ratios, rolling volatility, RSI, volume change, high-low range.
+- Walk-forward training on configurable `lookback` window (default 200 bars), predicts next bar's close.
+- Each produces two lines: **Predicted** (in-sample) and **Future** (extrapolated for `horizon` bars, default 5).
+- RF colors: Predicted=#E040FB (purple), Future=#FF6EC7 (pink). XGB colors: Predicted=#00E676 (green), Future=#76FF03 (lime).
+- Database migration renames existing "ML Predict" indicators to "ML Predict (Random Forest)".
+
+2026-06-04
+
+- Horizontal line drawings now show a price label at the left edge of the chart, in the same color as the line.
+- Label updates live when the line is dragged, edited (Settings dialog), or copied.
+- Label position tracks the chart's horizontal scroll/zoom automatically via `sigXRangeChanged`.
+- Labels are removed when horizontal lines are deleted.
+- Fixed drawings disappearing after downloading/updating data — `plot_candlesticks` now saves and restores drawings across chart rebuilds.
+- `get_drawings()` now includes `width` field so drawings are restored with correct line width.
+- Overlay lines that extend beyond data length (future predictions) are now supported in the chart view.
+
+2026-06-05
+
+- Added "Limit" date filter to toolbar: QDateEdit + "Set" and "Clear" buttons to restrict chart display to a specific end date.
+- When a limit date is set, the chart, overlay indicators, and separate indicator panels all display data only up to (and including) the limit date.
+- Full data is preserved in `_full_df`; clearing the limit restores the complete view.
+- `ChartView` now has `_limit_date`, `set_limit_date()`, `clear_limit_date()`, and `_apply_limit_date()` methods.
+- Tab switching updates the toolbar QDateEdit to reflect the current chart's limit date.
+- Fixed: `plot_candlesticks` now uses `self.df` (filtered) instead of the raw `df` parameter for all rendering (candlesticks, line chart, volume, spread lines).
+
+2026-06-05b
+
+- Trendline Settings dialog now has editable Bar+Y spinboxes for both points (was read-only QLabels).
+- `DrawingSettingsDialog` adds `get_point1()` and `get_point2()` methods for trendline point editing.
+- `on_drawing_double_clicked` applies trendline point changes via `update_point()`.
 
 

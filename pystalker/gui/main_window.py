@@ -9,13 +9,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTabWidget, QMenuBar, QMenu, QToolBar, QStatusBar, QProgressBar,
     QMessageBox, QFileDialog, QComboBox, QLabel, QDialog, QInputDialog,
-    QDialogButtonBox, QApplication
+    QDialogButtonBox, QApplication, QDateEdit, QPushButton
 )
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QByteArray, QTimer, QSettings
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QByteArray, QTimer, QSettings, QDate
 from PyQt6.QtGui import QAction, QIcon
 
 from .navigator import AssetNavigator
-from .chart_view import ChartView
+from .chart_view import ChartView, OverlayLine
 from .chart_tab import ChartTabWidget
 from ..core.data import BarData, ChartAssets
 from ..core.providers import DataManager
@@ -443,6 +443,85 @@ class PyStalkerWindow(QMainWindow):
         crosshair_action.setChecked(True)
         crosshair_action.triggered.connect(self.on_toggle_crosshair)
         toolbar.addAction(crosshair_action)
+        
+        toolbar.addSeparator()
+        
+        limit_label = QLabel(" Limit: ")
+        toolbar.addWidget(limit_label)
+        
+        self.limit_date_edit = QDateEdit()
+        self.limit_date_edit.setCalendarPopup(True)
+        self.limit_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.limit_date_edit.setDate(QDate.currentDate())
+        self.limit_date_edit.setSpecialValueText("None")
+        self.limit_date_edit.setEnabled(False)
+        toolbar.addWidget(self.limit_date_edit)
+        
+        self.limit_date_action = QAction("Set", toolbar)
+        self.limit_date_action.setToolTip("Apply limit date to chart")
+        self.limit_date_action.triggered.connect(self.on_limit_date_apply)
+        toolbar.addAction(self.limit_date_action)
+        
+        self.limit_clear_action = QAction("Clear", toolbar)
+        self.limit_clear_action.setToolTip("Remove limit date filter")
+        self.limit_clear_action.triggered.connect(self.on_limit_date_clear)
+        toolbar.addAction(self.limit_clear_action)
+    
+    def on_limit_date_apply(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol:
+            return
+        qdate = self.limit_date_edit.date()
+        if not qdate.isValid():
+            return
+        limit_date = qdate.toPyDate()
+        chart_view = tab.chart_view
+        chart_view.set_limit_date(limit_date)
+        self._apply_limit_filter(tab)
+    
+    def on_limit_date_clear(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol:
+            return
+        chart_view = tab.chart_view
+        chart_view.clear_limit_date()
+        self._apply_limit_filter(tab)
+    
+    def _apply_limit_filter(self, tab):
+        from ..core.indicators import IndicatorManager
+        chart_view = tab.chart_view
+        filtered_df = chart_view.df
+        if filtered_df is None or filtered_df.empty:
+            return
+        
+        for panel_name in list(tab._indicator_panels.keys()):
+            panel = tab._indicator_panels.pop(panel_name)
+            panel.range_changed.disconnect(tab.on_indicator_range_changed)
+            panel.setParent(None)
+            panel.deleteLater()
+        tab._distribute_splitter_sizes()
+        
+        chart_view.overlay_lines.clear()
+        chart_view.indicator_curves.clear()
+        
+        for ind in tab.indicators:
+            colors = ind.get('colors', {})
+            hlines = ind.get('hlines', [])
+            params = dict(ind.get('params', {}))
+            if hlines:
+                params['hlines'] = hlines
+            unique_name = ind.get('name', ind.get('indicator_name', ''))
+            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], filtered_df, params, colors=colors)
+            if indicator:
+                visible = ind.get('visible', True)
+                if ind['type'] == 'overlay':
+                    for line in indicator.lines:
+                        chart_view.overlay_lines.append(OverlayLine(line, visible, unique_name or line.name))
+                else:
+                    if visible:
+                        tab.add_indicator_panel(indicator, filtered_df)
+        
+        chart_view.plot_candlesticks(chart_view._full_df, chart_view.symbol)
     
     def on_open_chart(self):
         text, ok = QInputDialog.getText(self, "Download from Yahoo Finance", 
@@ -790,6 +869,13 @@ class PyStalkerWindow(QMainWindow):
         
         if not from_session_restore:
             self.save_session()
+        
+        self.limit_date_edit.setEnabled(True)
+        if tab.chart_view._full_df is not None and len(tab.chart_view._full_df) > 0:
+            last_date = tab.chart_view._full_df.index[-1]
+            if hasattr(last_date, 'date'):
+                last_date = last_date.date()
+            self.limit_date_edit.setDate(QDate(last_date.year, last_date.month, last_date.day))
     
     def on_asset_selected(self, symbol: str):
         if symbol in self.assets.get_symbols():
@@ -969,6 +1055,16 @@ class PyStalkerWindow(QMainWindow):
             style = tab.chart_view.chart_style
             for s, action in self.chart_style_actions.items():
                 action.setChecked(s == style)
+            self.limit_date_edit.setEnabled(tab.chart_view.df is not None)
+            if tab.chart_view._limit_date is not None:
+                self.limit_date_edit.setDate(QDate(tab.chart_view._limit_date.year, tab.chart_view._limit_date.month, tab.chart_view._limit_date.day))
+            elif tab.chart_view._full_df is not None and len(tab.chart_view._full_df) > 0:
+                last_date = tab.chart_view._full_df.index[-1]
+                if hasattr(last_date, 'date'):
+                    last_date = last_date.date()
+                self.limit_date_edit.setDate(QDate(last_date.year, last_date.month, last_date.day))
+        else:
+            self.limit_date_edit.setEnabled(False)
     
     def on_indicator_panel_double_clicked(self, indicator_name: str):
         from .indicator_dialog import IndicatorDialog
@@ -1075,6 +1171,8 @@ class PyStalkerWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if dialog.is_removed():
                 if 'item' in drawing:
+                    if drawing.get('type') == 'hline' and hasattr(drawing['item'], 'label'):
+                        tab.chart_view.plot_widget.removeItem(drawing['item'].label)
                     tab.chart_view.plot_widget.removeItem(drawing['item'])
                 tab.chart_view.drawings.remove(drawing)
             else:
@@ -1084,10 +1182,31 @@ class PyStalkerWindow(QMainWindow):
                 item = drawing['item']
                 item.color = drawing['color']
                 item.width = drawing['width']
-                item.generatePicture()
-                item.update()
                 drawing_type = drawing.get('type', 'trendline')
-                if drawing_type != 'vline':
+                if drawing_type == 'hline':
+                    new_y = dialog.get_y()
+                    if new_y is not None:
+                        drawing['points'][0] = (0, new_y)
+                        item.setY(new_y)
+                    item.setColor(drawing['color'])
+                    tab.chart_view._update_hline_labels()
+                elif drawing_type == 'vline':
+                    new_bar = dialog.get_bar()
+                    if new_bar is not None:
+                        drawing['points'][0] = (new_bar, 0)
+                        item.setX(new_bar)
+                else:
+                    new_p1 = dialog.get_point1()
+                    new_p2 = dialog.get_point2()
+                    if new_p1 is not None and new_p2 is not None:
+                        drawing['points'][0] = new_p1
+                        drawing['points'][1] = new_p2
+                        item.update_point(0, new_p1[0], new_p1[1])
+                        item.update_point(1, new_p2[0], new_p2[1])
+                    item.color = drawing['color']
+                    item.width = drawing['width']
+                    item.generatePicture()
+                    item.update()
                     tab.chart_view.snap_drawing_points(drawing)
     
     def load_saved_symbols(self):
@@ -1177,6 +1296,8 @@ class PyStalkerWindow(QMainWindow):
         if tab:
             for drawing in tab.chart_view.drawings:
                 if 'item' in drawing:
+                    if drawing.get('type') == 'hline' and hasattr(drawing['item'], 'label'):
+                        tab.chart_view.plot_widget.removeItem(drawing['item'].label)
                     tab.chart_view.plot_widget.removeItem(drawing['item'])
             tab.chart_view.drawings.clear()
             if tab.chart_view.preview_line is not None:
@@ -1195,15 +1316,22 @@ class PyStalkerWindow(QMainWindow):
         dialog = EditDrawingsDialog(drawings, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             for item in dialog.get_removed_items():
+                if hasattr(item, 'label'):
+                    tab.chart_view.plot_widget.removeItem(item.label)
                 tab.chart_view.plot_widget.removeItem(item)
             
             for d in drawings:
                 if 'item' in d and d.get('color'):
-                    d['item'].color = d['color']
-                    d['item'].width = d.get('width', 1)
-                    d['item'].generatePicture()
-                    d['item'].update()
+                    item_obj = d['item']
+                    if d.get('type') == 'hline' and hasattr(item_obj, 'setColor'):
+                        item_obj.setColor(d['color'])
+                    else:
+                        item_obj.color = d['color']
+                    item_obj.width = d.get('width', 1)
+                    item_obj.generatePicture()
+                    item_obj.update()
                     tab.chart_view.snap_drawing_points(d)
+            tab.chart_view._update_hline_labels()
     
     def restore_settings(self):
         settings = QSettings("PyStalker", "PyStalker")
