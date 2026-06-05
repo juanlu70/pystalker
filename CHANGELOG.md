@@ -120,6 +120,30 @@
 - Each produces two lines: **Predicted** (in-sample) and **Future** (extrapolated for `horizon` bars, default 5).
 - RF colors: Predicted=#E040FB (purple), Future=#FF6EC7 (pink). XGB colors: Predicted=#00E676 (green), Future=#76FF03 (lime).
 - Database migration renames existing "ML Predict" indicators to "ML Predict (Random Forest)".
+
+2026-06-04
+
+- Horizontal line drawings now show a price label at the left edge of the chart, in the same color as the line.
+- Label updates live when the line is dragged, edited (Settings dialog), or copied.
+- Label position tracks the chart's horizontal scroll/zoom automatically via `sigXRangeChanged`.
+- Labels are removed when horizontal lines are deleted.
+- Fixed drawings disappearing after downloading/updating data — `plot_candlesticks` now saves and restores drawings across chart rebuilds.
+- `get_drawings()` now includes `width` field so drawings are restored with correct line width.
 - Overlay lines that extend beyond data length (future predictions) are now supported in the chart view.
+
+2026-06-05
+
+- Added "Limit" date filter to toolbar: QDateEdit + "Set" and "Clear" buttons to restrict chart display to a specific end date.
+- When a limit date is set, the chart, overlay indicators, and separate indicator panels all display data only up to (and including) the limit date.
+- Full data is preserved in `_full_df`; clearing the limit restores the complete view.
+- `ChartView` now has `_limit_date`, `set_limit_date()`, `clear_limit_date()`, and `_apply_limit_date()` methods.
+- Tab switching updates the toolbar QDateEdit to reflect the current chart's limit date.
+- Fixed: `plot_candlesticks` now uses `self.df` (filtered) instead of the raw `df` parameter for all rendering (candlesticks, line chart, volume, spread lines).
+
+2026-06-05b
+
+- Trendline Settings dialog now has editable Bar+Y spinboxes for both points (was read-only QLabels).
+- `DrawingSettingsDialog` adds `get_point1()` and `get_point2()` methods for trendline point editing.
+- `on_drawing_double_clicked` applies trendline point changes via `update_point()`.
 
 
