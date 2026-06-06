@@ -297,14 +297,19 @@ def _build_ml_features(data: pd.DataFrame):
         except Exception:
             pass
     
-    vol_change = np.full(n, np.nan)
-    vol_change[1:] = np.where(volume[:-1] > 0, (volume[1:] - volume[:-1]) / volume[:-1], 0)
+    vol_change = np.zeros(n)
+    vol_change[0] = np.nan
+    np.divide(volume[1:] - volume[:-1], volume[:-1], out=vol_change[1:], where=volume[:-1] > 0)
     
-    high_low_range = np.where((high - low) > 0, (high - low) / close, 0)
+    high_low_range = np.zeros(n)
+    np.divide(high - low, close, out=high_low_range, where=(close > 0) & ((high - low) > 0))
     
-    sma5_ratio = np.where(sma20 > 0, close / sma5, np.nan)
-    sma10_ratio = np.where(sma20 > 0, close / sma10, np.nan)
-    sma20_ratio = np.where(sma20 > 0, close / sma20, np.nan)
+    sma5_ratio = np.full(n, np.nan)
+    np.divide(close, sma5, out=sma5_ratio, where=sma5 > 0)
+    sma10_ratio = np.full(n, np.nan)
+    np.divide(close, sma10, out=sma10_ratio, where=sma10 > 0)
+    sma20_ratio = np.full(n, np.nan)
+    np.divide(close, sma20, out=sma20_ratio, where=sma20 > 0)
     rsi_norm = rsi / 100.0
     
     feature_matrix = np.column_stack([

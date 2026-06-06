@@ -210,6 +210,8 @@ class PyStalkerWindow(QMainWindow):
         self.navigator.asset_selected.connect(self.on_asset_selected)
         self.navigator.spread_selected.connect(self.on_spread_selected)
         self.navigator.spread_removed.connect(self.on_spread_removed)
+        self.navigator.copy_graph.connect(self.on_copy_graph)
+        self.navigator.rename_graph.connect(self.on_rename_graph)
         main_splitter.addWidget(self.navigator)
         
         self.chart_tabs = ChartTabWidget()
@@ -457,6 +459,11 @@ class PyStalkerWindow(QMainWindow):
         self.limit_date_edit.setEnabled(False)
         toolbar.addWidget(self.limit_date_edit)
         
+        self.limit_advance_action = QAction(load_icon("play"), "Advance 1 day", toolbar)
+        self.limit_advance_action.setToolTip("Advance limit date by 1 trading day")
+        self.limit_advance_action.triggered.connect(self.on_limit_date_advance)
+        toolbar.addAction(self.limit_advance_action)
+        
         self.limit_date_action = QAction("Set", toolbar)
         self.limit_date_action.setToolTip("Apply limit date to chart")
         self.limit_date_action.triggered.connect(self.on_limit_date_apply)
@@ -485,6 +492,27 @@ class PyStalkerWindow(QMainWindow):
             return
         chart_view = tab.chart_view
         chart_view.clear_limit_date()
+        self._apply_limit_filter(tab)
+    
+    def on_limit_date_advance(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol:
+            return
+        chart_view = tab.chart_view
+        if chart_view._full_df is None or chart_view._full_df.empty:
+            return
+        current_limit = chart_view._limit_date
+        if current_limit is None:
+            return
+        df = chart_view._full_df
+        future = df[df.index.date > current_limit] if hasattr(df.index, 'date') else df[df.index > pd.Timestamp(current_limit)]
+        if future.empty:
+            return
+        next_date = future.index[0]
+        if hasattr(next_date, 'date'):
+            next_date = next_date.date()
+        chart_view.set_limit_date(next_date)
+        self.limit_date_edit.setDate(QDate(next_date.year, next_date.month, next_date.day))
         self._apply_limit_filter(tab)
     
     def _apply_limit_filter(self, tab):
@@ -887,6 +915,62 @@ class PyStalkerWindow(QMainWindow):
                 self.load_chart(symbol)
             else:
                 self.fetch_symbol(symbol)
+    
+    def on_copy_graph(self, symbol: str):
+        asset = self.assets.get_asset(symbol)
+        if not asset:
+            cached_data = self.database.load_bars(symbol)
+            if cached_data:
+                self.assets.add_asset(symbol, cached_data)
+                asset = cached_data
+        if not asset:
+            return
+        
+        existing = self.database.get_symbols()
+        n = 1
+        new_symbol = f"{symbol}-{n}"
+        while new_symbol in existing:
+            n += 1
+            new_symbol = f"{symbol}-{n}"
+        
+        new_bar_data = BarData(new_symbol)
+        new_bar_data.bars = list(asset.bars)
+        new_bar_data._df = None
+        
+        self.database.save_bars(new_bar_data)
+        self.assets.add_asset(new_symbol, new_bar_data)
+        self.navigator.add_asset(new_symbol)
+        self.load_chart(new_symbol)
+    
+    def on_rename_graph(self, symbol: str):
+        from PyQt6.QtWidgets import QInputDialog
+        new_symbol, ok = QInputDialog.getText(self, "Rename Graph", f"New name for {symbol}:", text=symbol)
+        if not ok or not new_symbol:
+            return
+        new_symbol = new_symbol.strip().upper()
+        if not new_symbol or new_symbol == symbol:
+            return
+        if new_symbol in self.assets.get_symbols():
+            return
+        
+        self.database.rename_symbol(symbol, new_symbol)
+        asset = self.assets.get_asset(symbol)
+        if asset:
+            asset.symbol = new_symbol
+            self.assets.remove_asset(symbol)
+            self.assets.add_asset(new_symbol, asset)
+        
+        self.navigator.rename_asset(symbol, new_symbol)
+        
+        if symbol in self.chart_tabs.tabs:
+            tab = self.chart_tabs.tabs[symbol]
+            tab.symbol = new_symbol
+            del self.chart_tabs.tabs[symbol]
+            self.chart_tabs.tabs[new_symbol] = tab
+            idx = self.chart_tabs.indexOf(tab)
+            self.chart_tabs.setTabText(idx, new_symbol)
+        
+        self.save_session()
     
     def on_chart_closed(self, symbol: str):
         self.save_session()

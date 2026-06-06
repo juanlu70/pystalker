@@ -13,6 +13,8 @@ class AssetNavigator(QWidget):
     asset_selected = pyqtSignal(str)
     spread_selected = pyqtSignal(str)
     spread_removed = pyqtSignal(str)
+    copy_graph = pyqtSignal(str)
+    rename_graph = pyqtSignal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,6 +78,14 @@ class AssetNavigator(QWidget):
         self.tabs.addTab(spreads_widget, "Spreads")
         
         layout.addWidget(self.tabs)
+        
+        self.copy_button = QPushButton("Copy Graph")
+        self.copy_button.clicked.connect(self.on_copy_graph)
+        layout.addWidget(self.copy_button)
+        
+        self.rename_button = QPushButton("Rename")
+        self.rename_button.clicked.connect(self.on_rename_graph)
+        layout.addWidget(self.rename_button)
     
     def add_asset(self, symbol: str):
         if symbol not in self.assets:
@@ -85,6 +95,14 @@ class AssetNavigator(QWidget):
     
     def get_assets(self) -> list:
         return self.assets
+    
+    def rename_asset(self, old_symbol: str, new_symbol: str):
+        if old_symbol in self.assets:
+            idx = self.assets.index(old_symbol)
+            self.assets[idx] = new_symbol
+            item = self.asset_list.item(idx)
+            if item:
+                item.setText(new_symbol)
     
     def filter_assets(self, pattern: str):
         pattern = pattern.lower()
@@ -128,6 +146,9 @@ class AssetNavigator(QWidget):
         refresh_action = QAction("Refresh", self)
         refresh_action.triggered.connect(lambda: self.on_refresh(item.text()))
         menu.addAction(refresh_action)
+        rename_action = QAction("Rename", self)
+        rename_action.triggered.connect(lambda: self.rename_graph.emit(item.text()))
+        menu.addAction(rename_action)
         remove_action = QAction("Remove", self)
         remove_action.triggered.connect(self.on_remove_asset)
         menu.addAction(remove_action)
@@ -135,6 +156,16 @@ class AssetNavigator(QWidget):
     
     def on_refresh(self, symbol: str):
         self.asset_selected.emit(symbol)
+    
+    def on_copy_graph(self):
+        selected = self.asset_list.selectedItems()
+        if selected:
+            self.copy_graph.emit(selected[0].text())
+    
+    def on_rename_graph(self):
+        selected = self.asset_list.selectedItems()
+        if selected:
+            self.rename_graph.emit(selected[0].text())
     
     def add_spread(self, name: str):
         if name not in self.spreads:
