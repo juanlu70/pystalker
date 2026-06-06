@@ -406,6 +406,23 @@ class Database:
         
         self.conn.commit()
     
+    def rename_symbol(self, old_symbol: str, new_symbol: str):
+        cursor = self.conn.cursor()
+        
+        old_bars = f'{old_symbol}_bars'
+        old_settings = f'{old_symbol}_settings'
+        old_drawings = f'{old_symbol}_drawings'
+        new_bars = f'{new_symbol}_bars'
+        new_settings = f'{new_symbol}_settings'
+        new_drawings = f'{new_symbol}_drawings'
+        
+        cursor.execute(f'ALTER TABLE "{old_bars}" RENAME TO "{new_bars}"')
+        cursor.execute(f'ALTER TABLE "{old_settings}" RENAME TO "{new_settings}"')
+        cursor.execute(f'ALTER TABLE "{old_drawings}" RENAME TO "{new_drawings}"')
+        cursor.execute('UPDATE symbols SET symbol = ? WHERE symbol = ?', (new_symbol, old_symbol))
+        
+        self.conn.commit()
+    
     def save_session(self, open_tabs: List[str], current_tab: str = None):
         cursor = self.conn.cursor()
         

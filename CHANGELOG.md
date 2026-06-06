@@ -146,4 +146,20 @@
 - `DrawingSettingsDialog` adds `get_point1()` and `get_point2()` methods for trendline point editing.
 - `on_drawing_double_clicked` applies trendline point changes via `update_point()`.
 
+2026-06-06
+
+- "Copy Graph" button added at the bottom of the left navigator panel.
+- Copies only OHLCV data (no indicators, no drawings) from the selected asset to a new symbol with auto-incremented name (e.g. BTC-USD -> BTC-USD-1, BTC-USD-2...).
+- Creates all new DB tables (`_bars`, `_settings`, `_drawings`) for the copied asset as if it were a brand-new asset.
+- `AssetNavigator` emits `copy_graph(str)` signal; `on_copy_graph()` in main_window handles the copy logic.
+- Fixed RuntimeWarning divide-by-zero and invalid-value in `_build_ml_features()`: replaced `np.where` divisions with `np.divide(..., where=...)` for `vol_change`, `high_low_range`, `sma5_ratio`, `sma10_ratio`, `sma20_ratio`.
+- "Rename" button added at the bottom of the left navigator panel.
+- "Rename" action added to asset right-click context menu in the navigator.
+- `on_rename_graph()` prompts for a new name, renames DB tables (`_bars`, `_settings`, `_drawings`) via `ALTER TABLE RENAME TO`, updates the `symbols` table, `ChartAssets`, navigator list text, and open chart tab label/symbol.
+- `Database.rename_symbol()` method added for atomic table+row rename.
+- `AssetNavigator.rename_asset()` updates the in-memory list item text.
+- "Advance 1 day" Play button (▶ icon) added to the limit date toolbar, between the QDateEdit and the "Set" button.
+- `on_limit_date_advance()` finds the next trading day after the current limit date in `_full_df` and advances the limit to it.
+- `play.xpm` icon added to assets directory.
+
 
