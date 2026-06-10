@@ -273,6 +273,18 @@ class Database:
     
     def save_bars(self, bar_data: BarData, interval: str = '1d'):
         symbol = bar_data.symbol
+        if bar_data.source_symbol:
+            self._ensure_symbol_tables(symbol)
+            settings_table = f'"{symbol}_settings"'
+            cursor = self.conn.cursor()
+            cursor.execute(f'INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)',
+                          ('source_symbol', bar_data.source_symbol))
+            cursor.execute('''
+                INSERT OR REPLACE INTO symbols (symbol, last_updated, interval)
+                VALUES (?, ?, ?)
+            ''', (symbol, int(datetime.now().timestamp()), interval))
+            self.conn.commit()
+            return
         self._ensure_symbol_tables(symbol)
         
         cursor = self.conn.cursor()
@@ -326,6 +338,19 @@ class Database:
         
         cursor = self.conn.cursor()
         
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('source_symbol',))
+        row_src = cursor.fetchone()
+        source_symbol = ''
+        if row_src and row_src[0]:
+            source_symbol = row_src[0]
+            bar_data = BarData(symbol)
+            bar_data.source_symbol = source_symbol
+            cursor.execute(f'INSERT OR REPLACE INTO {settings_table} (key, value) VALUES (?, ?)',
+                          ('source_symbol', source_symbol))
+            self.conn.commit()
+            return bar_data
+        
         bars_table = f'"{symbol}_bars"'
         cursor.execute(f'PRAGMA table_info({bars_table})')
         columns = [row[1] for row in cursor.fetchall()]
@@ -350,6 +375,7 @@ class Database:
             return None
         
         bar_data = BarData(symbol)
+        bar_data.source_symbol = source_symbol
         series2_values = []
         
         for row in rows:
@@ -394,14 +420,23 @@ class Database:
         cursor.execute('SELECT symbol FROM symbols ORDER BY symbol')
         return [row[0] for row in cursor.fetchall()]
     
+    def is_copy(self, symbol: str) -> bool:
+        cursor = self.conn.cursor()
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('source_symbol',))
+        row = cursor.fetchone()
+        return row is not None and bool(row[0])
+    
     def delete_symbol(self, symbol: str):
         cursor = self.conn.cursor()
         
         bars_table = f'"{symbol}_bars"'
         settings_table = f'"{symbol}_settings"'
+        drawings_table = f'''"{symbol}_drawings"'''
         
         cursor.execute(f'DROP TABLE IF EXISTS {bars_table}')
         cursor.execute(f'DROP TABLE IF EXISTS {settings_table}')
+        cursor.execute(f'DROP TABLE IF EXISTS {drawings_table}')
         cursor.execute('DELETE FROM symbols WHERE symbol = ?', (symbol,))
         
         self.conn.commit()

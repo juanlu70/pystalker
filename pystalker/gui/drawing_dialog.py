@@ -8,7 +8,7 @@ from PyQt6.QtGui import QColor
 from .shared import SNAP_VALUES, SNAP_INDEX_TO_MODE
 
 
-DRAWING_TYPE_LABELS = {'trendline': 'Trendline', 'hline': 'HLine', 'vline': 'VLine'}
+DRAWING_TYPE_LABELS = {'trendline': 'Trendline', 'hline': 'HLine', 'vline': 'VLine', 'asc_channel': 'Asc Channel', 'desc_channel': 'Desc Channel'}
 
 
 class EditDrawingsDialog(QDialog):
@@ -146,6 +146,8 @@ class EditDrawingsDialog(QDialog):
             return f"Y: {points[0][1]:.2f}"
         elif dtype == 'vline' and points:
             return f"Bar: {int(points[0][0])}"
+        elif dtype in ('asc_channel', 'desc_channel') and len(points) >= 3:
+            return f"BL:({int(points[0][0])}, {points[0][1]:.2f}) BR:({int(points[1][0])}, {points[1][1]:.2f}) H:{points[2][1]:.2f}"
         else:
             return ', '.join(f'({p[0]}, {p[1]:.2f})' for p in points)
 
@@ -191,6 +193,22 @@ class EditDrawingsDialog(QDialog):
             self.p2x_spin.setVisible(False)
             self.p2_y_label.setVisible(False)
             self.p2y_spin.setVisible(False)
+        elif dtype in ('asc_channel', 'desc_channel'):
+            self.p1_label.setText("BL Point:")
+            self.p1_bar_label.setVisible(True)
+            self.p1x_spin.setVisible(True)
+            self.p1_y_label.setVisible(True)
+            self.p1y_spin.setVisible(True)
+            self.p2_label.setText("BR Point:")
+            self.p2_bar_label.setVisible(True)
+            self.p2x_spin.setVisible(True)
+            self.p2_y_label.setVisible(True)
+            self.p2y_spin.setVisible(True)
+            if len(points) >= 3:
+                self.p1x_spin.setValue(points[0][0])
+                self.p1y_spin.setValue(points[0][1])
+                self.p2x_spin.setValue(points[1][0])
+                self.p2y_spin.setValue(points[1][1])
         else:
             self.p1_label.setText("Point 1:")
             self.p1_bar_label.setVisible(True)
@@ -231,6 +249,12 @@ class EditDrawingsDialog(QDialog):
             d['points'] = [(0, self.p1y_spin.value())]
         elif dtype == 'vline':
             d['points'] = [(int(self.p1x_spin.value()), 0)]
+        elif dtype in ('asc_channel', 'desc_channel'):
+            d['points'] = [
+                (int(self.p1x_spin.value()), self.p1y_spin.value()),
+                (int(self.p2x_spin.value()), self.p2y_spin.value()),
+                (0, d['points'][2][1])
+            ]
         else:
             d['points'] = [
                 (int(self.p1x_spin.value()), self.p1y_spin.value()),
@@ -312,6 +336,42 @@ class DrawingSettingsDialog(QDialog):
             self.bar_spin.setRange(0, 999999)
             self.bar_spin.setValue(int(points[0][0]))
             form.addRow("Bar:", self.bar_spin)
+        elif self.drawing_type in ('asc_channel', 'desc_channel') and len(points) >= 3:
+            self.p1x_spin = QDoubleSpinBox()
+            self.p1x_spin.setDecimals(0)
+            self.p1x_spin.setRange(0, 999999)
+            self.p1x_spin.setValue(int(points[0][0]))
+            self.p1y_spin = QDoubleSpinBox()
+            self.p1y_spin.setDecimals(2)
+            self.p1y_spin.setRange(-999999, 999999)
+            self.p1y_spin.setValue(points[0][1])
+            p1_row = QHBoxLayout()
+            p1_row.addWidget(QLabel("Bar:"))
+            p1_row.addWidget(self.p1x_spin)
+            p1_row.addWidget(QLabel("Y:"))
+            p1_row.addWidget(self.p1y_spin)
+            form.addRow("BL Point:", p1_row)
+            
+            self.p2x_spin = QDoubleSpinBox()
+            self.p2x_spin.setDecimals(0)
+            self.p2x_spin.setRange(0, 999999)
+            self.p2x_spin.setValue(int(points[1][0]))
+            self.p2y_spin = QDoubleSpinBox()
+            self.p2y_spin.setDecimals(2)
+            self.p2y_spin.setRange(-999999, 999999)
+            self.p2y_spin.setValue(points[1][1])
+            p2_row = QHBoxLayout()
+            p2_row.addWidget(QLabel("Bar:"))
+            p2_row.addWidget(self.p2x_spin)
+            p2_row.addWidget(QLabel("Y:"))
+            p2_row.addWidget(self.p2y_spin)
+            form.addRow("BR Point:", p2_row)
+            
+            self.height_spin = QDoubleSpinBox()
+            self.height_spin.setDecimals(2)
+            self.height_spin.setRange(-999999, 999999)
+            self.height_spin.setValue(points[2][1])
+            form.addRow("Height:", self.height_spin)
         elif len(points) >= 2:
             self.p1x_spin = QDoubleSpinBox()
             self.p1x_spin.setDecimals(0)
@@ -391,6 +451,11 @@ class DrawingSettingsDialog(QDialog):
     def get_point2(self):
         if hasattr(self, 'p2x_spin'):
             return (int(self.p2x_spin.value()), self.p2y_spin.value())
+        return None
+    
+    def get_height(self):
+        if hasattr(self, 'height_spin'):
+            return self.height_spin.value()
         return None
     
     def _remove(self):

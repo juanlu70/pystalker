@@ -239,6 +239,117 @@ class VLineItem(pg.GraphicsObject):
         return pg.QtCore.QRectF(self.picture.boundingRect())
 
 
+class ChannelItem(pg.GraphicsObject):
+    def __init__(self, points, color='#FFD700', width=1, x_min=0, x_max=1000):
+        pg.GraphicsObject.__init__(self)
+        self.points = list(points)
+        self.color = color
+        self.width = width
+        self.x_min = x_min
+        self.x_max = x_max
+        self.show_endpoints = False
+        self.generatePicture()
+
+    def setPoints(self, points):
+        self.points = list(points)
+        self.generatePicture()
+        self.update()
+
+    def update_point(self, index, x, y):
+        if 0 <= index < len(self.points):
+            self.points[index] = (x, y)
+            self.generatePicture()
+            self.update()
+
+    def setXRange(self, x_min, x_max):
+        self.x_min = x_min
+        self.x_max = x_max
+        self.generatePicture()
+        self.update()
+
+    def _get_derived(self):
+        b1x, b1y = self.points[0]
+        b2x, b2y = self.points[1]
+        height = self.points[2][1]
+        if b2x != b1x:
+            slope = (b2y - b1y) / (b2x - b1x)
+        else:
+            slope = 0
+        t1x, t1y = b1x, b1y + height
+        t2x, t2y = b2x, b2y + height
+        m1x, m1y = b1x, b1y + height / 2
+        m2x, m2y = b2x, b2y + height / 2
+        mid_bx = (b1x + b2x) / 2
+        mid_by = (b1y + b2y) / 2
+        mid_tx = (t1x + t2x) / 2
+        mid_ty = (t1y + t2y) / 2
+        mid_lx = (b1x + t1x) / 2
+        mid_ly = (b1y + t1y) / 2
+        mid_rx = (b2x + t2x) / 2
+        mid_ry = (b2y + t2y) / 2
+        left_x = min(b1x, b2x)
+        y_at_left = b1y + slope * (left_x - b1x) if b2x != b1x else b1y
+        y_at_xmax = b1y + slope * (self.x_max - b1x) if b2x != b1x else b1y
+        return {
+            'bl': (b1x, b1y), 'br': (b2x, b2y),
+            'tl': (t1x, t1y), 'tr': (t2x, t2y),
+            'ml': (m1x, m1y), 'mr': (m2x, m2y),
+            'mid_bottom': (mid_bx, mid_by), 'mid_top': (mid_tx, mid_ty),
+            'mid_left': (mid_lx, mid_ly), 'mid_right': (mid_rx, mid_ry),
+            'bottom_line': ((left_x, y_at_left), (self.x_max, y_at_xmax)),
+            'top_line': ((left_x, y_at_left + height), (self.x_max, y_at_xmax + height)),
+            'middle_line': ((left_x, y_at_left + height / 2), (self.x_max, y_at_xmax + height / 2)),
+        }
+
+    def generatePicture(self):
+        self.picture = pg.QtGui.QPicture()
+        p = pg.QtGui.QPainter(self.picture)
+        d = self._get_derived()
+        pen = pg.mkPen(self.color, width=self.width)
+        p.setPen(pen)
+        bs, be = d['bottom_line']
+        p.drawLine(pg.QtCore.QPointF(bs[0], bs[1]), pg.QtCore.QPointF(be[0], be[1]))
+        ts, te = d['top_line']
+        p.drawLine(pg.QtCore.QPointF(ts[0], ts[1]), pg.QtCore.QPointF(te[0], te[1]))
+        mid_pen = pg.mkPen(self.color, width=max(1, self.width - 1))
+        mid_pen.setStyle(pg.QtCore.Qt.PenStyle.DashLine)
+        p.setPen(mid_pen)
+        ms, me = d['middle_line']
+        p.drawLine(pg.QtCore.QPointF(ms[0], ms[1]), pg.QtCore.QPointF(me[0], me[1]))
+        p.end()
+
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+        if not self.show_endpoints:
+            return
+        p.setPen(pg.mkPen(self.color, width=2))
+        p.setBrush(pg.QtGui.QBrush(pg.QtGui.QColor(self.color), Qt.BrushStyle.SolidPattern))
+        vb = None
+        try:
+            if hasattr(self, 'parentItem') and self.parentItem():
+                vb = self.parentItem().getViewBox()
+            else:
+                vb = self.getViewBox()
+        except Exception:
+            pass
+        if vb:
+            pixel_size = vb.viewPixelSize()
+            rx = 6 * pixel_size[0]
+            ry = 6 * pixel_size[1]
+        else:
+            rx = ry = 0.3
+        d = self._get_derived()
+        control_points = [
+            d['bl'], d['br'], d['tl'], d['tr'],
+            d['mid_bottom'], d['mid_top'], d['mid_left'], d['mid_right'],
+        ]
+        for cx, cy in control_points:
+            p.drawEllipse(pg.QtCore.QPointF(cx, cy), rx, ry)
+
+    def boundingRect(self):
+        return pg.QtCore.QRectF(self.picture.boundingRect())
+
+
 class ChartView(QWidget):
     indicator_added = pyqtSignal(str)
     indicator_visibility_changed = pyqtSignal(str, bool)
@@ -284,6 +395,8 @@ class ChartView(QWidget):
         self._ignore_context_menu = False
         self._draw_mode = False
         self._show_endpoints = False
+        self._undo_stack = []
+        self._undo_max = 10
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -397,6 +510,28 @@ class ChartView(QWidget):
         self.info_text.setText("VLine: Click to place vertical line (Press ESC to cancel)")
         self.update_info_position()
     
+    def start_asc_channel_drawing(self):
+        if not self._draw_mode:
+            self.draw_mode = True
+            self.drawModeToggled.emit(True)
+        self._drawing_type = 'asc_channel'
+        self.drawing_trendline = True
+        self.trendline_points = []
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.info_text.setText("Asc Channel: Click first corner point (Press ESC to cancel)")
+        self.update_info_position()
+    
+    def start_desc_channel_drawing(self):
+        if not self._draw_mode:
+            self.draw_mode = True
+            self.drawModeToggled.emit(True)
+        self._drawing_type = 'desc_channel'
+        self.drawing_trendline = True
+        self.trendline_points = []
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.info_text.setText("Desc Channel: Click first corner point (Press ESC to cancel)")
+        self.update_info_position()
+    
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_T:
             if self._draw_mode:
@@ -450,6 +585,10 @@ class ChartView(QWidget):
                 label = "Horizontal Line Settings"
             elif drawing_type == 'vline':
                 label = "Vertical Line Settings"
+            elif drawing_type == 'asc_channel':
+                label = "Ascending Channel Settings"
+            elif drawing_type == 'desc_channel':
+                label = "Descending Channel Settings"
             else:
                 label = "Drawing Settings"
             menu = QMenu(self)
@@ -462,6 +601,7 @@ class ChartView(QWidget):
             elif action == copy_action:
                 self._copy_drawing(drawing)
             elif action == remove_action:
+                self.push_undo()
                 if 'item' in drawing:
                     if drawing.get('type') == 'hline' and hasattr(drawing['item'], 'label'):
                         self.plot_widget.removeItem(drawing['item'].label)
@@ -533,6 +673,7 @@ class ChartView(QWidget):
         self.bear_color = bear_color
     
     def _copy_drawing(self, drawing):
+        self.push_undo()
         import copy
         drawing_type = drawing.get('type', 'trendline')
         color = drawing.get('color', '#FFD700')
@@ -571,6 +712,26 @@ class ChartView(QWidget):
                 'type': 'vline',
                 'item': item,
                 'points': [(new_x, 0)],
+                'color': color,
+                'snap': '',
+                'params': copy.deepcopy(drawing.get('params', {})),
+                'width': width
+            })
+        elif drawing_type in ('asc_channel', 'desc_channel'):
+            orig_points = drawing.get('points', [])
+            if len(orig_points) < 3:
+                return
+            new_points = [(int(round(px + offset_x)), py + offset_y) for px, py in orig_points[:2]]
+            new_points.append((0, orig_points[2][1]))
+            x_min = -10
+            x_max = len(self.df) + 10 if self.df is not None else 1000
+            item = ChannelItem(new_points, color, width, x_min, x_max)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.drawings.append({
+                'type': drawing_type,
+                'item': item,
+                'points': new_points,
                 'color': color,
                 'snap': '',
                 'params': copy.deepcopy(drawing.get('params', {})),
@@ -627,6 +788,8 @@ class ChartView(QWidget):
             drawing['item'].update()
         elif drawing_type == 'vline':
             drawing['points'] = [(drawing['points'][0][0], 0)]
+        elif drawing_type in ('asc_channel', 'desc_channel'):
+            pass
         else:
             new_points = []
             for px, py in drawing['points']:
@@ -682,6 +845,10 @@ class ChartView(QWidget):
                     x_min = -10
                     x_max = len(self.df) + 10 if self.df is not None else 1000
                     drawing['item'].setXRange(x_min, x_max)
+                elif drawing_type in ('asc_channel', 'desc_channel'):
+                    x_min = -10
+                    x_max = len(self.df) + 10 if self.df is not None else 1000
+                    drawing['item'].setXRange(x_min, x_max)
     
     def cancel_trendline(self):
         self.drawing_trendline = False
@@ -705,6 +872,7 @@ class ChartView(QWidget):
                     return
                 hit = self._hit_test_drawing_endpoint(event)
                 if hit:
+                    self.push_undo()
                     self._dragging_drawing = hit[0]
                     self._dragging_point_idx = hit[1]
                     self.grabMouse()
@@ -715,11 +883,13 @@ class ChartView(QWidget):
                     drawing_type = hit_line.get('type', 'trendline')
                     hit_endpoint = self._hit_test_drawing_endpoint(event)
                     if hit_endpoint:
+                        self.push_undo()
                         self._dragging_drawing = hit_endpoint[0]
                         self._dragging_point_idx = hit_endpoint[1]
                         self.grabMouse()
                     else:
-                        if drawing_type == 'trendline':
+                        if drawing_type in ('trendline', 'asc_channel', 'desc_channel'):
+                            self.push_undo()
                             self._dragging_drawing = hit_line
                             self._dragging_point_idx = -1
                             self._drag_start_pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
@@ -746,6 +916,7 @@ class ChartView(QWidget):
                 hit_endpoint = self._hit_test_drawing_endpoint(event)
                 hit_line = self._hit_test_drawing_line(event)
                 if hit_endpoint:
+                    self.push_undo()
                     self.draw_mode = True
                     self.drawModeToggled.emit(True)
                     self._dragging_drawing = hit_endpoint[0]
@@ -755,7 +926,8 @@ class ChartView(QWidget):
                     return
                 elif hit_line:
                     drawing_type = hit_line.get('type', 'trendline')
-                    if drawing_type == 'trendline':
+                    if drawing_type in ('trendline', 'asc_channel', 'desc_channel'):
+                        self.push_undo()
                         self.draw_mode = True
                         self.drawModeToggled.emit(True)
                         self._dragging_drawing = hit_line
@@ -791,6 +963,30 @@ class ChartView(QWidget):
     def _get_next_drawing_color(self):
         return '#FFFFFF'
     
+    def _channel_control_points(self, drawing):
+        points = drawing.get('points', [])
+        if len(points) < 3:
+            return []
+        b1x, b1y = points[0]
+        b2x, b2y = points[1]
+        height = points[2][1]
+        t1x, t1y = b1x, b1y + height
+        t2x, t2y = b2x, b2y + height
+        mid_bx = (b1x + b2x) / 2
+        mid_by = (b1y + b2y) / 2
+        mid_tx = (t1x + t2x) / 2
+        mid_ty = (t1y + t2y) / 2
+        mid_lx = (b1x + t1x) / 2
+        mid_ly = (b1y + t1y) / 2
+        mid_rx = (b2x + t2x) / 2
+        mid_ry = (b2y + t2y) / 2
+        return [
+            (b1x, b1y, 'bl'), (b2x, b2y, 'br'),
+            (t1x, t1y, 'tl'), (t2x, t2y, 'tr'),
+            (mid_bx, mid_by, 'mid_b'), (mid_tx, mid_ty, 'mid_t'),
+            (mid_lx, mid_ly, 'mid_l'), (mid_rx, mid_ry, 'mid_r'),
+        ]
+
     def _hit_test_at(self, mx, my):
         view_range = self.view_box.viewRange()
         x_range = view_range[0][1] - view_range[0][0]
@@ -805,9 +1001,16 @@ class ChartView(QWidget):
         for drawing in self.drawings:
             if 'item' not in drawing:
                 continue
-            for i, (px, py) in enumerate(drawing['points']):
-                if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
-                    return drawing
+            drawing_type = drawing.get('type', 'trendline')
+            if drawing_type in ('asc_channel', 'desc_channel'):
+                cps = self._channel_control_points(drawing)
+                for cx, cy, _ in cps:
+                    if abs(mx - cx) < hit_radius_x and abs(my - cy) < hit_radius_y:
+                        return drawing
+            else:
+                for i, (px, py) in enumerate(drawing['points']):
+                    if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
+                        return drawing
         
         for drawing in self.drawings:
             if 'item' not in drawing:
@@ -821,6 +1024,22 @@ class ChartView(QWidget):
                 vx = drawing['points'][0][0] if drawing.get('points') else None
                 if vx is not None and abs(mx - vx) < threshold_x:
                     return drawing
+            elif drawing_type in ('asc_channel', 'desc_channel'):
+                points = drawing.get('points', [])
+                if len(points) < 3:
+                    continue
+                b1x, b1y = points[0]
+                b2x, b2y = points[1]
+                height = points[2][1]
+                if b2x == b1x:
+                    continue
+                slope = (b2y - b1y) / (b2x - b1x)
+                for line_y_offset in [0, height, height / 2]:
+                    base_y = b1y + line_y_offset
+                    y_at_mx = base_y + slope * (mx - b1x)
+                    dist = abs(my - y_at_mx)
+                    if dist < threshold_y:
+                        return drawing
             else:
                 if len(drawing.get('points', [])) < 2:
                     continue
@@ -867,6 +1086,11 @@ class ChartView(QWidget):
                 px = drawing['points'][0][0] if drawing.get('points') else None
                 if px is not None and abs(mx - px) < hit_radius_x:
                     return (drawing, 0)
+            elif drawing_type in ('asc_channel', 'desc_channel'):
+                cps = self._channel_control_points(drawing)
+                for idx, (cx, cy, name) in enumerate(cps):
+                    if abs(mx - cx) < hit_radius_x and abs(my - cy) < hit_radius_y:
+                        return (drawing, idx)
             else:
                 for i, (px, py) in enumerate(drawing['points']):
                     if abs(mx - px) < hit_radius_x and abs(my - py) < hit_radius_y:
@@ -896,6 +1120,22 @@ class ChartView(QWidget):
                 vx = drawing['points'][0][0] if drawing.get('points') else None
                 if vx is not None and abs(mx - vx) < threshold_x:
                     return drawing
+            elif drawing_type in ('asc_channel', 'desc_channel'):
+                points = drawing.get('points', [])
+                if len(points) < 3:
+                    continue
+                b1x, b1y = points[0]
+                b2x, b2y = points[1]
+                height = points[2][1]
+                if b2x == b1x:
+                    continue
+                slope = (b2y - b1y) / (b2x - b1x)
+                for line_y_offset in [0, height, height / 2]:
+                    base_y = b1y + line_y_offset
+                    y_at_mx = base_y + slope * (mx - b1x)
+                    dist = abs(my - y_at_mx)
+                    if dist < threshold_y:
+                        return drawing
             else:
                 if len(drawing.get('points', [])) < 2:
                     continue
@@ -923,7 +1163,53 @@ class ChartView(QWidget):
         snap = self._dragging_drawing.get('snap', '') or self.snap_mode
         drawing_type = self._dragging_drawing.get('type', 'trendline')
         
-        if self._dragging_point_idx == -1 and drawing_type == 'trendline':
+        if drawing_type in ('asc_channel', 'desc_channel'):
+            x, y = self._snap_y(x, y, snap)
+            x_idx = int(round(x))
+            points = self._dragging_drawing['points']
+            idx = self._dragging_point_idx
+            if idx == -1:
+                dx = x - self._drag_start_pos.x()
+                dy = y - self._drag_start_pos.y()
+                if snap:
+                    xs, ys = self._snap_y(x, y, snap)
+                    xs0, ys0 = self._snap_y(self._drag_start_pos.x(), self._drag_start_pos.y(), snap)
+                    dx = xs - xs0
+                    dy = ys - ys0
+                for i, (ox, oy) in enumerate(self._drag_start_points):
+                    if i < 2:
+                        new_x = int(round(ox + dx))
+                        new_y = oy + dy
+                        if snap:
+                            _, new_y = self._snap_y(ox + dx, oy + dy, snap)
+                        self._dragging_drawing['points'][i] = (new_x, new_y)
+                self._dragging_drawing['item'].setPoints(self._dragging_drawing['points'])
+            else:
+                b1x, b1y = points[0]
+                b2x, b2y = points[1]
+                height = points[2][1]
+                if idx == 0:
+                    points[0] = (x_idx, y)
+                elif idx == 1:
+                    points[1] = (x_idx, y)
+                elif idx == 2:
+                    points[2] = (0, y - b1y)
+                elif idx == 3:
+                    points[2] = (0, y - b2y)
+                elif idx == 4:
+                    dy_move = y - b1y
+                    points[0] = (b1x, y)
+                    points[1] = (b2x, b2y + dy_move)
+                elif idx == 5:
+                    points[2] = (0, height + y - (b1y + b2y) / 2 - height / 2)
+                elif idx == 6:
+                    points[0] = (x_idx, y)
+                    points[2] = (0, (b1y + height) - y)
+                elif idx == 7:
+                    points[1] = (x_idx, y)
+                self._dragging_drawing['item'].setPoints(points)
+            self.plot_widget.update()
+        elif self._dragging_point_idx == -1 and drawing_type == 'trendline':
             dx = x - self._drag_start_pos.x()
             dy = y - self._drag_start_pos.y()
             if snap:
@@ -957,6 +1243,7 @@ class ChartView(QWidget):
             self.plot_widget.update()
     
     def handle_drawing_click(self, event):
+        self.push_undo()
         pos = self.plot_widget.plotItem.vb.mapSceneToView(QPointF(event.pos()))
         x, y = self._snap_y(pos.x(), pos.y(), self.snap_mode)
         x_idx = int(round(x))
@@ -1006,6 +1293,41 @@ class ChartView(QWidget):
             self.update_info_position()
             return
         
+        if self._drawing_type in ('asc_channel', 'desc_channel'):
+            self.trendline_points.append((x_idx, y))
+            if len(self.trendline_points) == 1:
+                self.info_text.setText(f"[BL] bar={x_idx} y={y:.2f} | Click to set bottom-right point")
+                self.update_info_position()
+            elif len(self.trendline_points) == 2:
+                p1 = self.trendline_points[0]
+                if self.preview_line is not None:
+                    self.plot_widget.removeItem(self.preview_line)
+                    self.preview_line = None
+                color = self._get_next_drawing_color()
+                x_min = -10
+                x_max = len(self.df) + 10 if self.df is not None else 1000
+                default_height = abs(y - p1[1]) * 0.5 if abs(y - p1[1]) > 0 else 1.0
+                if self._drawing_type == 'desc_channel':
+                    default_height = -abs(default_height)
+                points = [(int(p1[0]), p1[1]), (x_idx, y), (0, default_height)]
+                item = ChannelItem(points, color, 1, x_min, x_max)
+                item.show_endpoints = self._draw_mode
+                self.plot_widget.addItem(item)
+                self.drawings.append({
+                    'type': self._drawing_type,
+                    'item': item,
+                    'points': points,
+                    'color': color,
+                    'snap': self.snap_mode or '',
+                    'params': {},
+                    'width': 1
+                })
+                self.trendline_points = []
+                self.drawing_trendline = False
+                self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
+                self.update_info_position()
+            return
+        
         self.trendline_points.append((x_idx, y))
         
         if len(self.trendline_points) == 1:
@@ -1046,6 +1368,23 @@ class ChartView(QWidget):
                 self.info_text.setText("Trendline drawn. Press T to draw another.")
     
     def _update_preview_line(self, mouse_point):
+        if self._drawing_type in ('asc_channel', 'desc_channel') and len(self.trendline_points) == 1:
+            x, y = self._snap_y(mouse_point.x(), mouse_point.y(), self.snap_mode)
+            x_idx = int(round(x))
+            if self.preview_line is not None:
+                self.plot_widget.removeItem(self.preview_line)
+                self.preview_line = None
+            p1 = self.trendline_points[0]
+            default_height = abs(y - p1[1]) * 0.5 if abs(y - p1[1]) > 0 else 1.0
+            if self._drawing_type == 'desc_channel':
+                default_height = -abs(default_height)
+            x_min = -10
+            x_max = len(self.df) + 10 if self.df is not None else 1000
+            points = [(int(p1[0]), p1[1]), (x_idx, y), (0, default_height)]
+            self.preview_line = ChannelItem(points, '#FFFFFF', 1, x_min, x_max)
+            self.plot_widget.addItem(self.preview_line)
+            return
+        
         if self._drawing_type != 'trendline' or len(self.trendline_points) != 1:
             return
         
@@ -1612,6 +1951,39 @@ class ChartView(QWidget):
             self.show_last_year()
             self.set_initial_y_range()
     
+    def _snapshot_drawings(self):
+        result = []
+        for drawing in self.drawings:
+            result.append({
+                'type': drawing.get('type', 'trendline'),
+                'color': drawing.get('color', '#FFD700'),
+                'width': drawing.get('width', 1),
+                'snap': drawing.get('snap', ''),
+                'params': drawing.get('params', {}),
+                'points': [list(p) for p in drawing.get('points', [])]
+            })
+        return result
+    
+    def push_undo(self):
+        snapshot = self._snapshot_drawings()
+        self._undo_stack.append(snapshot)
+        if len(self._undo_stack) > self._undo_max:
+            self._undo_stack.pop(0)
+    
+    def undo(self):
+        if not self._undo_stack:
+            return False
+        snapshot = self._undo_stack.pop()
+        for drawing in self.drawings:
+            if 'item' in drawing:
+                item = drawing['item']
+                if drawing.get('type') == 'hline' and hasattr(item, 'label'):
+                    self.plot_widget.removeItem(item.label)
+                self.plot_widget.removeItem(item)
+        self.drawings.clear()
+        self.restore_drawings(snapshot)
+        return True
+    
     def get_drawings(self):
         result = []
         for drawing in self.drawings:
@@ -1661,6 +2033,23 @@ class ChartView(QWidget):
                     'type': 'vline',
                     'item': item,
                     'points': [(x, 0)],
+                    'color': color,
+                    'snap': d.get('snap', ''),
+                    'params': d.get('params', {}),
+                    'width': width
+                })
+            elif drawing_type in ('asc_channel', 'desc_channel'):
+                points = [tuple(p) for p in d.get('points', [])]
+                if len(points) < 3:
+                    continue
+                x_min = -10
+                x_max = len(self.df) + 10 if self.df is not None else 1000
+                item = ChannelItem(points, color, width, x_min, x_max)
+                self.plot_widget.addItem(item)
+                self.drawings.append({
+                    'type': drawing_type,
+                    'item': item,
+                    'points': points,
                     'color': color,
                     'snap': d.get('snap', ''),
                     'params': d.get('params', {}),

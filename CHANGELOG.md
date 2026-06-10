@@ -161,5 +161,47 @@
 - "Advance 1 day" Play button (▶ icon) added to the limit date toolbar, between the QDateEdit and the "Set" button.
 - `on_limit_date_advance()` finds the next trading day after the current limit date in `_full_df` and advances the limit to it.
 - `play.xpm` icon added to assets directory.
+- Ascending Channel and Descending Channel drawing tools added.
+- Channels are drawn by clicking two points to define the bottom trend line; automatic default height creates the channel.
+- Channel has 3 parallel trend lines: bottom (solid), top (solid), middle (dashed) — all share the same slope.
+- Data model: 3 stored points = bottom-line-start (BL), bottom-line-end (BR), (0, height) where height is vertical offset from bottom to top.
+- 8 control points: 4 corners (BL, BR, TL, TR) + 4 edge midpoints (mid-bottom, mid-top, mid-left, mid-right).
+- Dragging BL/BR changes slope (all 3 lines maintain parallelism). Dragging TL/TR changes height only.
+- Dragging mid-bottom shifts the bottom line vertically (preserving slope). Dragging mid-top changes height.
+- Dragging mid-left moves the BL point. Dragging mid-right moves the BR point. Whole-body drag moves everything.
+- Descending channels default to negative height (top below bottom for descenders).
+- `ChannelItem` extends trend lines from the left box edge to x_max (right-open, left-cut at the box).
+- Channel snap: "Low" snaps only the bottom line (BL, BR) to Low prices; "High" adjusts height so the top line touches High prices at BL/BR bar positions.
+- Channel types stored as `asc_channel` and `desc_channel` in DB; fully persisted with save/restore.
+- Toolbar buttons with `asc_channel.xpm` and `desc_channel.xpm` icons; menu entries under Draw menu.
+- Context menu, double-click settings, copy drawing, and snap all work for channels.
+- Settings dialog shows BL Point, BR Point, and Height for channels.
+- `asc_channel.xpm` and `desc_channel.xpm` icons added to assets directory.
+- Copy Graph now shares the same price data (bars) as the original symbol via `source_symbol` in the DB settings table.
+- Price updates to the original symbol automatically propagate to all copies.
+- Drawings and indicators remain independent per copy (each copy has its own `_settings` and `_drawings` tables).
+- `BarData.source_symbol` attribute added to track the source symbol for copied graphs.
+- `_refresh_copies_of()` method added to refresh all open chart copies when the source symbol is updated.
+- `asset_removed` signal added to `AssetNavigator`; emitted when removing an asset from the list.
+- `on_asset_removed()` handler in MainWindow: closes tab, removes from assets, deletes symbol from database (bars/settings/drawings tables).
+- `delete_symbol()` now also drops the `_drawings` table for the deleted symbol.
+- Copies with `source_symbol` are properly inserted into the `symbols` DB table on `save_bars()`.
+- Copied graphs no longer store any bars data — they always read data from the source asset in-memory or from the source's DB table.
+- `database.load_bars()` for copies returns a `BarData` with empty bars and `source_symbol` set; the source asset is resolved at runtime.
+- `_get_source_asset()` and `_resolve_df()` helpers added to MainWindow to resolve source asset data for copies.
+- `load_chart()` resolves source asset data for copies; loads source from DB if not already in memory.
+- `_refresh_copies_of()` uses `_resolve_df()` to get data from the source asset instead of copying bars.
+- Fixed drawing settings dialog requiring multiple clicks: signal connections in `load_chart()` are now only made for new tabs (`is_new`), preventing duplicate connections.
+- Fixed `desc_channel` context menu label showing "Vertical Line Settings" instead of "Descending Channel Settings".
+- `add_indicator_to_chart()` now uses `_resolve_df()` so indicators work correctly on copied graphs (which have empty bars).
+- `_refresh_copies_of()` now also recreates stacked (non-overlay) indicator panels, not just overlays.
+- `on_update_all()` now also recreates stacked indicator panels and skips copied symbols (which are not real tickers).
+- Added `database.is_copy()` method to check if a symbol is a copy with `source_symbol`.
+- Both `on_update_all()` and `_refresh_copies_of()` now call `tab.clear_indicator_panels()` before rebuilding indicator panels.
+- Undo feature for drawings: stores up to 10 snapshots of all drawing state (points, color, width, snap, type).
+- `push_undo()` called before every drawing modification: drag start, creation, copy, removal, settings dialog, edit dialog, clear.
+- `undo()` in `ChartView` restores the last snapshot by clearing all current drawings and recreating them from the snapshot.
+- Undo toolbar button and `Ctrl+Z` shortcut added to `PyStalkerWindow`.
+- `_snapshot_drawings()` serializes drawing state without `item` references; `restore_drawings()` recreates visual items.
 
 

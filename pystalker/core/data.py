@@ -41,6 +41,7 @@ class BarData:
         self.spread_symbol2 = ''
         self.spread_color1 = '#00BFFF'
         self.spread_color2 = '#FF6B6B'
+        self.source_symbol = ''
         
     def count(self) -> int:
         return len(self.bars)
