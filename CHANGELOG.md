@@ -203,5 +203,11 @@
 - `undo()` in `ChartView` restores the last snapshot by clearing all current drawings and recreating them from the snapshot.
 - Undo toolbar button and `Ctrl+Z` shortcut added to `PyStalkerWindow`.
 - `_snapshot_drawings()` serializes drawing state without `item` references; `restore_drawings()` recreates visual items.
+- Channel middle line now defaults to grey (`#808080`) instead of the channel color.
+- `middle_color` attribute added to `ChannelItem`; stored in drawing dict and DB params.
+- `DrawingSettingsDialog` shows "Middle Line" color picker for channels (asc/desc).
+- `EditDrawingsDialog` shows "Middle Color" row for channels; applied on "Apply Changes".
+- `middle_color` saved/loaded via `params` in `database.save_drawings`/`load_drawings`.
+- `on_drawing_double_clicked` applies `middle_color` changes to `ChannelItem` and regenerates picture.
 
 

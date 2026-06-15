@@ -66,6 +66,28 @@ class EditDrawingsDialog(QDialog):
         self.width_spin.setValue(1)
         edit_layout.addRow("Width:", self.width_spin)
 
+        self.middle_color_label = QLabel()
+        self.middle_color_label.setFixedSize(60, 25)
+        self.middle_color_label.setStyleSheet("background-color: #808080; border: 1px solid white;")
+        self.middle_color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.middle_color_label.mousePressEvent = lambda e: self._choose_middle_color()
+        self.middle_color_btn = QPushButton("Choose Color")
+        self.middle_color_btn.clicked.connect(self._choose_middle_color)
+        middle_color_row = QHBoxLayout()
+        middle_color_row.addWidget(self.middle_color_label)
+        middle_color_row.addWidget(self.middle_color_btn)
+        middle_color_row.addStretch()
+        self.middle_color_row_widget = QWidget()
+        middle_color_layout = QVBoxLayout(self.middle_color_row_widget)
+        middle_color_layout.setContentsMargins(0, 0, 0, 0)
+        middle_color_label_layout = QHBoxLayout()
+        middle_color_label_layout.addWidget(QLabel("Middle Color:"))
+        middle_color_label_layout.addStretch()
+        middle_color_layout.addLayout(middle_color_label_layout)
+        middle_color_layout.addLayout(middle_color_row)
+        edit_layout.addRow(self.middle_color_row_widget)
+        self.middle_color_row_widget.hide()
+
         self.p1x_spin = QDoubleSpinBox()
         self.p1x_spin.setDecimals(0)
         self.p1x_spin.setRange(0, 999999)
@@ -167,6 +189,12 @@ class EditDrawingsDialog(QDialog):
         self.width_spin.setValue(d.get('width', 1))
 
         dtype = d.get('type', 'trendline')
+        if dtype in ('asc_channel', 'desc_channel'):
+            middle_color = d.get('middle_color', '#808080')
+            self.middle_color_label.setStyleSheet(f"background-color: {middle_color}; border: 1px solid white;")
+            self.middle_color_row_widget.show()
+        else:
+            self.middle_color_row_widget.hide()
         points = d.get('points', [])
 
         if dtype == 'hline':
@@ -235,6 +263,15 @@ class EditDrawingsDialog(QDialog):
         if color.isValid():
             self.color_label.setStyleSheet(f"background-color: {color.name()}; border: 1px solid white;")
 
+    def _choose_middle_color(self):
+        row = getattr(self, '_current_row', 0)
+        if row >= len(self.drawings):
+            return
+        current = self.drawings[row].get('middle_color', '#808080')
+        color = QColorDialog.getColor(QColor(current), self, "Select Middle Line Color")
+        if color.isValid():
+            self.middle_color_label.setStyleSheet(f"background-color: {color.name()}; border: 1px solid white;")
+
     def _apply_changes(self):
         row = getattr(self, '_current_row', -1)
         if row < 0 or row >= len(self.drawings):
@@ -245,6 +282,8 @@ class EditDrawingsDialog(QDialog):
         d['width'] = self.width_spin.value()
 
         dtype = d.get('type', 'trendline')
+        if dtype in ('asc_channel', 'desc_channel'):
+            d['middle_color'] = self.middle_color_label.palette().color(self.middle_color_label.backgroundRole()).name()
         if dtype == 'hline':
             d['points'] = [(0, self.p1y_spin.value())]
         elif dtype == 'vline':
@@ -293,6 +332,7 @@ class DrawingSettingsDialog(QDialog):
         self.setWindowTitle(f"{DRAWING_TYPE_LABELS.get(self.drawing_type, 'Drawing')} Settings")
         self.setMinimumWidth(300)
         self._color = drawing.get('color', '#FFFFFF')
+        self._middle_color = drawing.get('middle_color', '#808080')
         self._snap = drawing.get('snap', '')
         self._width = drawing.get('width', 1)
         self._init_ui()
@@ -372,6 +412,19 @@ class DrawingSettingsDialog(QDialog):
             self.height_spin.setRange(-999999, 999999)
             self.height_spin.setValue(points[2][1])
             form.addRow("Height:", self.height_spin)
+            
+            self.middle_color_label = QLabel()
+            self.middle_color_label.setFixedSize(60, 25)
+            self.middle_color_label.setStyleSheet(f"background-color: {self._middle_color}; border: 1px solid white;")
+            self.middle_color_label.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.middle_color_label.mousePressEvent = lambda e: self._choose_middle_color()
+            middle_color_btn = QPushButton("Choose Color")
+            middle_color_btn.clicked.connect(self._choose_middle_color)
+            middle_color_row = QHBoxLayout()
+            middle_color_row.addWidget(self.middle_color_label)
+            middle_color_row.addWidget(middle_color_btn)
+            middle_color_row.addStretch()
+            form.addRow("Middle Line:", middle_color_row)
         elif len(points) >= 2:
             self.p1x_spin = QDoubleSpinBox()
             self.p1x_spin.setDecimals(0)
@@ -424,6 +477,12 @@ class DrawingSettingsDialog(QDialog):
             self._color = color.name()
             self.color_label.setStyleSheet(f"background-color: {self._color}; border: 1px solid white;")
     
+    def _choose_middle_color(self):
+        color = QColorDialog.getColor(QColor(self._middle_color), self, "Select Middle Line Color")
+        if color.isValid():
+            self._middle_color = color.name()
+            self.middle_color_label.setStyleSheet(f"background-color: {self._middle_color}; border: 1px solid white;")
+    
     def get_color(self):
         return self._color
     
@@ -457,6 +516,9 @@ class DrawingSettingsDialog(QDialog):
         if hasattr(self, 'height_spin'):
             return self.height_spin.value()
         return None
+    
+    def get_middle_color(self):
+        return self._middle_color
     
     def _remove(self):
         self._removed = True

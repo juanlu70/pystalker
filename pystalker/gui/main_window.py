@@ -1379,12 +1379,18 @@ class PyStalkerWindow(QMainWindow):
                     new_p1 = dialog.get_point1()
                     new_p2 = dialog.get_point2()
                     new_height = dialog.get_height()
+                    new_middle_color = dialog.get_middle_color()
                     if new_p1 is not None and new_p2 is not None:
                         drawing['points'][0] = new_p1
                         drawing['points'][1] = new_p2
                     if new_height is not None and len(drawing['points']) >= 3:
                         drawing['points'][2] = (0, new_height)
+                    if new_middle_color is not None:
+                        drawing['middle_color'] = new_middle_color
+                        item.middle_color = new_middle_color
                     item.setPoints(drawing['points'])
+                    item.generatePicture()
+                    item.update()
                     tab.chart_view.snap_drawing_points(drawing)
                 else:
                     new_p1 = dialog.get_point1()
@@ -1539,8 +1545,11 @@ class PyStalkerWindow(QMainWindow):
                     else:
                         item_obj.color = d['color']
                     item_obj.width = d.get('width', 1)
-                    if d.get('type') in ('asc_channel', 'desc_channel') and hasattr(item_obj, 'setPoints'):
-                        item_obj.setPoints(d.get('points', []))
+                    if d.get('type') in ('asc_channel', 'desc_channel'):
+                        if hasattr(item_obj, 'setPoints'):
+                            item_obj.setPoints(d.get('points', []))
+                        if d.get('middle_color'):
+                            item_obj.middle_color = d['middle_color']
                     else:
                         item_obj.generatePicture()
                         item_obj.update()

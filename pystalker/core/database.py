@@ -644,6 +644,8 @@ class Database:
             import json
             params = dict(drawing.get('params', {}))
             params['width'] = drawing.get('width', 1)
+            if drawing.get('middle_color'):
+                params['middle_color'] = drawing['middle_color']
             cursor.execute(f'''
                 INSERT INTO {drawings_table} (type, color, snap, params, points)
                 VALUES (?, ?, ?, ?, ?)
@@ -669,14 +671,18 @@ class Database:
             import json
             params = json.loads(row[3]) if row[3] else {}
             width = params.pop('width', 1)
-            drawings.append({
+            middle_color = params.pop('middle_color', None)
+            entry = {
                 'type': row[0],
                 'color': row[1],
                 'snap': row[2] if row[2] else '',
                 'params': params,
                 'points': json.loads(row[4]) if row[4] else [],
                 'width': width
-            })
+            }
+            if middle_color:
+                entry['middle_color'] = middle_color
+            drawings.append(entry)
         
         return drawings
     

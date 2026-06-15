@@ -240,11 +240,12 @@ class VLineItem(pg.GraphicsObject):
 
 
 class ChannelItem(pg.GraphicsObject):
-    def __init__(self, points, color='#FFD700', width=1, x_min=0, x_max=1000):
+    def __init__(self, points, color='#FFD700', width=1, x_min=0, x_max=1000, middle_color=None):
         pg.GraphicsObject.__init__(self)
         self.points = list(points)
         self.color = color
         self.width = width
+        self.middle_color = middle_color
         self.x_min = x_min
         self.x_max = x_max
         self.show_endpoints = False
@@ -311,7 +312,7 @@ class ChannelItem(pg.GraphicsObject):
         p.drawLine(pg.QtCore.QPointF(bs[0], bs[1]), pg.QtCore.QPointF(be[0], be[1]))
         ts, te = d['top_line']
         p.drawLine(pg.QtCore.QPointF(ts[0], ts[1]), pg.QtCore.QPointF(te[0], te[1]))
-        mid_pen = pg.mkPen(self.color, width=max(1, self.width - 1))
+        mid_pen = pg.mkPen(self.middle_color or self.color, width=max(1, self.width - 1))
         mid_pen.setStyle(pg.QtCore.Qt.PenStyle.DashLine)
         p.setPen(mid_pen)
         ms, me = d['middle_line']
@@ -725,7 +726,8 @@ class ChartView(QWidget):
             new_points.append((0, orig_points[2][1]))
             x_min = -10
             x_max = len(self.df) + 10 if self.df is not None else 1000
-            item = ChannelItem(new_points, color, width, x_min, x_max)
+            middle_color = drawing.get('middle_color', '#808080')
+            item = ChannelItem(new_points, color, width, x_min, x_max, middle_color=middle_color)
             item.show_endpoints = self._draw_mode
             self.plot_widget.addItem(item)
             self.drawings.append({
@@ -735,7 +737,8 @@ class ChartView(QWidget):
                 'color': color,
                 'snap': '',
                 'params': copy.deepcopy(drawing.get('params', {})),
-                'width': width
+                'width': width,
+                'middle_color': middle_color
             })
         else:
             orig_points = drawing.get('points', [])
@@ -1320,7 +1323,8 @@ class ChartView(QWidget):
                     'color': color,
                     'snap': self.snap_mode or '',
                     'params': {},
-                    'width': 1
+                    'width': 1,
+                    'middle_color': '#808080'
                 })
                 self.trendline_points = []
                 self.drawing_trendline = False
@@ -1954,14 +1958,17 @@ class ChartView(QWidget):
     def _snapshot_drawings(self):
         result = []
         for drawing in self.drawings:
-            result.append({
+            entry = {
                 'type': drawing.get('type', 'trendline'),
                 'color': drawing.get('color', '#FFD700'),
                 'width': drawing.get('width', 1),
                 'snap': drawing.get('snap', ''),
                 'params': drawing.get('params', {}),
                 'points': [list(p) for p in drawing.get('points', [])]
-            })
+            }
+            if drawing.get('middle_color'):
+                entry['middle_color'] = drawing['middle_color']
+            result.append(entry)
         return result
     
     def push_undo(self):
@@ -1987,14 +1994,17 @@ class ChartView(QWidget):
     def get_drawings(self):
         result = []
         for drawing in self.drawings:
-            result.append({
+            entry = {
                 'type': drawing.get('type', 'trendline'),
                 'color': drawing.get('color', '#FFD700'),
                 'width': drawing.get('width', 1),
                 'snap': drawing.get('snap', ''),
                 'params': drawing.get('params', {}),
                 'points': [list(p) for p in drawing.get('points', [])]
-            })
+            }
+            if drawing.get('middle_color'):
+                entry['middle_color'] = drawing['middle_color']
+            result.append(entry)
         return result
     
     def restore_drawings(self, drawings_data):
@@ -2042,9 +2052,10 @@ class ChartView(QWidget):
                 points = [tuple(p) for p in d.get('points', [])]
                 if len(points) < 3:
                     continue
+                middle_color = d.get('middle_color', '#808080')
                 x_min = -10
                 x_max = len(self.df) + 10 if self.df is not None else 1000
-                item = ChannelItem(points, color, width, x_min, x_max)
+                item = ChannelItem(points, color, width, x_min, x_max, middle_color=middle_color)
                 self.plot_widget.addItem(item)
                 self.drawings.append({
                     'type': drawing_type,
@@ -2053,7 +2064,8 @@ class ChartView(QWidget):
                     'color': color,
                     'snap': d.get('snap', ''),
                     'params': d.get('params', {}),
-                    'width': width
+                    'width': width,
+                    'middle_color': middle_color
                 })
             else:
                 points = [tuple(p) for p in d.get('points', [])]
