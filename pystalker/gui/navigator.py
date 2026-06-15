@@ -11,6 +11,7 @@ from PyQt6.QtGui import QAction
 
 class AssetNavigator(QWidget):
     asset_selected = pyqtSignal(str)
+    asset_removed = pyqtSignal(str)
     spread_selected = pyqtSignal(str)
     spread_removed = pyqtSignal(str)
     copy_graph = pyqtSignal(str)
@@ -137,6 +138,7 @@ class AssetNavigator(QWidget):
             symbol = item.text()
             self.assets.remove(symbol)
             self.asset_list.takeItem(self.asset_list.row(item))
+            self.asset_removed.emit(symbol)
     
     def show_context_menu(self, pos):
         item = self.asset_list.itemAt(pos)
