@@ -848,13 +848,11 @@ class PyStalkerWindow(QMainWindow):
         if symbol not in self.navigator.get_assets():
             self.navigator.add_asset(symbol)
         
-        tab, _ = self.chart_tabs.add_chart_tab(symbol, interval)
-        tab.load_data(bar_data.to_dataframe(), symbol, interval)
+        self.load_chart(symbol, interval)
         self.current_symbol = symbol
         
         self.status_bar.showMessage(f"Downloaded {symbol} ({bar_data.count()} bars)")
         self._refresh_copies_of(symbol, bar_data)
-        self.save_session()
     
     def on_download_error(self, error_msg):
         if self.download_dialog and self.download_dialog.isVisible():
