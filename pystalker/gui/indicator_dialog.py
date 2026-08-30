@@ -325,7 +325,11 @@ class EditIndicatorsDialog(QDialog):
         
         for param_name, value in ind.get('params', {}).items():
             if param_name in dialog.param_widgets:
-                dialog.param_widgets[param_name].setValue(value)
+                widget = dialog.param_widgets[param_name]
+                if isinstance(widget, QDoubleSpinBox):
+                    widget.setValue(float(value))
+                else:
+                    widget.setValue(int(value))
         
         saved_hlines = ind.get('hlines', [])
         if saved_hlines and dialog.hline_levels:

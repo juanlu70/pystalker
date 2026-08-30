@@ -1,5 +1,58 @@
 # CHANGELOG
 
+2026-07-27
+
+- Added SuperTrend overlay indicator (params: period=10, multiplier=3.0).
+- SuperTrend rendered as two colored lines: Up (green #00FF7F) and Down (red #FF6B6B), plus Upper and Lower bands.
+- SuperTrend uses proper ratchet logic: lower band only ratchets up during uptrend, upper band only ratchets down during downtrend; opposite band resets each period.
+- Added Donchian Channel overlay indicator (params: period=20) with 3 lines: Upper, Middle, Lower.
+- Default colors: Upper=#FF6B6B, Middle=#4ECDC4, Lower=#95E1D3.
+- Fixed indicator edit dialog crashing when param types didn't match widget types (e.g., float value on QSpinBox).
+- Fixed `redraw_all_indicators` and `on_indicator_panel_double_clicked` to use `_resolve_df()` instead of `asset.to_dataframe()`.
+- Fixed `add_indicator_to_chart` to use `_resolve_df()` for copies/spreads.
+- Added null/empty dataframe checks before recalculating indicators.
+- Fixed window minimize/maximize flash on startup: geometry is now restored before show(), maximizing only when no saved geometry exists.
+
+2026-07-04
+
+- SQLite database performance optimizations:
+  - Enabled WAL mode (`PRAGMA journal_mode=WAL`) for better concurrent read/write performance.
+  - Set `PRAGMA synchronous=NORMAL` (was FULL) for faster writes with minimal risk.
+  - Set `PRAGMA cache_size=-64000` (64MB) and `PRAGMA temp_store=MEMORY` for faster queries.
+  - Set `PRAGMA busy_timeout=5000` to avoid immediate failures on lock contention.
+  - Replaced row-by-row `INSERT` loop in `save_bars()` with `executemany()` — eliminates 10,000+ individual SQL round-trips.
+  - Removed unnecessary `DELETE FROM` before `INSERT OR REPLACE` in `save_bars()` — upserts handle updates correctly.
+  - Replaced row-by-row `INSERT` loop in `save_drawings()` with `executemany()`.
+  - Replaced row-by-row `INSERT` loop in `save_settings()` with `executemany()`.
+  - Cached `_ensure_symbol_tables()` and `_ensure_bars_table()` — skip CREATE TABLE/ALTER TABLE if table was already ensured this session.
+  - Added migration version flag (`db_version=2` in settings table) to skip already-run migrations on startup.
+  - Fixed `chart_tab.py` creating new `Database()` instances for single writes — now uses shared `self._database` reference.
+  - Combined `load_chart_colors()` two separate queries into one `SELECT ... WHERE key IN (?, ?)`.
+  - Combined `load_session()` two separate queries into one `SELECT ... WHERE key IN (?, ?)`.
+  - Fixed SQL injection risk in `delete_symbol()` and `rename_symbol()` LIKE patterns — now uses parameterized `?` binding.
+  - Moved `import json` to module level (was imported inside loops).
+  - Removed redundant `INSERT OR REPLACE` for `source_symbol` in `load_bars()` (write-on-read removed).
+
+- Added `prob_target.py`: command-line tool that computes risk/reward probabilities for all assets in the pystalker database.
+- Shows LONG (take profit +target% vs stop loss -stop%) and SHORT (take profit -target% vs stop loss +stop%) for each asset.
+- Three models: Closer (empirical frequency), Lognormal (lognormal assumption with recent volatility), and GradientBoosting (sklearn GBClassifier).
+- Edge ratio = P(target) / P(stop) — above 1.0x means favourable risk/reward.
+- Default: 20% target, 5% stop, 10-day horizon. Configurable via `--target-pct`, `--stop-pct`, `--horizon`.
+- `--symbol` flag restricts to one asset; without it, all assets with enough data are processed.
+- `--date` flag allows backtesting at a historical reference date.
+- `--db` flag allows specifying an alternative database path.
+
+2026-06-26
+
+- Fixed timeframe switching (1wk, 1mo): changing timeframe now reloads the current tab with the new interval data instead of creating a new tab or loading wrong data.
+- Tab labels update to show interval when non-daily (e.g., "BTC-USD (1wk)").
+- Switching tabs syncs the timeframe combo to the active tab's interval.
+- Database stores bars per interval in separate tables (`{symbol}_bars` for daily, `{symbol}_{interval}_bars` for others) so weekly/monthly data doesn't overwrite daily.
+- `on_timeframe_changed` tries cached data first, falls back to download; clears and recalculates indicators on reload.
+- `on_download_finished` properly reconnects signals and recalculates indicators for existing tabs.
+- `delete_symbol` drops all interval-specific bars tables.
+- `rename_symbol` renames all interval-specific bars tables.
+
 2026-04-10
 
 - Moved vertical ruler (price) to the right side.

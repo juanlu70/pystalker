@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTabWidget, QMenuBar, QMenu, QToolBar, QStatusBar, QProgressBar,
     QMessageBox, QFileDialog, QComboBox, QLabel, QDialog, QInputDialog,
-    QDialogButtonBox, QApplication, QDateEdit, QPushButton
+    QDialogButtonBox, QApplication, QDateEdit, QPushButton, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QByteArray, QTimer, QSettings, QDate
 from PyQt6.QtGui import QAction, QIcon
@@ -92,7 +92,12 @@ class PyStalkerWindow(QMainWindow):
         self.setWindowTitle("PyStalker - Stock Charting Tool")
         self.setMinimumSize(1024, 768)
         
-        self.setWindowState(Qt.WindowState.WindowMaximized)
+        settings = QSettings("PyStalker", "PyStalker")
+        geometry = settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        else:
+            self.setWindowState(Qt.WindowState.WindowMaximized)
         
         self.init_ui()
         self.load_saved_symbols()
@@ -156,7 +161,6 @@ class PyStalkerWindow(QMainWindow):
         else:
             self.statusBar().removeWidget(progress)
             self.statusBar().showMessage("Ready", 2000)
-            self.restore_settings()
     
     def _load_next_bg_tab(self):
         if not self._bg_queue:
@@ -191,7 +195,10 @@ class PyStalkerWindow(QMainWindow):
     def _finish_bg_loading(self):
         self.statusBar().removeWidget(self._bg_progress)
         self.statusBar().showMessage("Ready", 2000)
-        self.restore_settings()
+        settings = QSettings("PyStalker", "PyStalker")
+        state = settings.value("windowState")
+        if state:
+            self.restoreState(state)
     
     def init_ui(self):
         central_widget = QWidget()
@@ -848,8 +855,33 @@ class PyStalkerWindow(QMainWindow):
         if symbol not in self.navigator.get_assets():
             self.navigator.add_asset(symbol)
         
-        tab, _ = self.chart_tabs.add_chart_tab(symbol, interval)
-        tab.load_data(bar_data.to_dataframe(), symbol, interval)
+        tab, is_new = self.chart_tabs.add_chart_tab(symbol, interval, database=self.database)
+        if is_new:
+            tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
+            tab.chart_view.drawingDoubleClicked.connect(self.on_drawing_double_clicked)
+            tab.chart_view.spreadStartDateChangeRequested.connect(self.on_spread_start_date_change)
+        
+        df = bar_data.to_dataframe()
+        indicators = tab.get_indicators()
+        tab.chart_view.overlay_lines.clear()
+        tab.clear_indicator_panels()
+        tab.load_data(df, symbol, interval)
+        
+        for ind in indicators:
+            colors = ind.get('colors', {})
+            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, ind.get('params'), colors=colors)
+            if indicator:
+                if ind.get('type') == 'overlay':
+                    visible = ind.get('visible', True)
+                    for line in indicator.lines:
+                        tab.chart_view.add_indicator_line(line, visible=visible, unique_name=ind['name'])
+                else:
+                    if ind.get('visible', True):
+                        tab.add_indicator_panel(indicator, df)
+        
+        tab.chart_view.plot_candlesticks(df, symbol)
+        tab.chart_view._needs_view_reset = True
+        self.chart_tabs.update_tab_label(symbol, interval)
         self.current_symbol = symbol
         
         self.status_bar.showMessage(f"Downloaded {symbol} ({bar_data.count()} bars)")
@@ -881,7 +913,7 @@ class PyStalkerWindow(QMainWindow):
         self.current_symbol = symbol
         df = source.to_dataframe() if source else asset.to_dataframe()
         
-        tab, is_new = self.chart_tabs.add_chart_tab(symbol, interval, set_current=set_current)
+        tab, is_new = self.chart_tabs.add_chart_tab(symbol, interval, set_current=set_current, database=self.database)
         
         if bull_color and bear_color:
             tab.chart_view.set_colors(bull_color, bear_color)
@@ -902,6 +934,7 @@ class PyStalkerWindow(QMainWindow):
             self.database.save_chart_style(symbol, 'line')
         
         tab.load_data(df, symbol, interval)
+        self.chart_tabs.update_tab_label(symbol, interval)
         
         if not is_new:
             saved_style = self.database.load_chart_style(symbol)
@@ -1072,8 +1105,39 @@ class PyStalkerWindow(QMainWindow):
                 tab.chart_view.plot_candlesticks(tab.df, tab.symbol)
     
     def on_timeframe_changed(self, timeframe: str):
-        if self.current_symbol:
-            self.fetch_symbol(self.current_symbol, timeframe)
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol:
+            return
+        symbol = tab.symbol
+        self.current_symbol = symbol
+        
+        cached_data = self.database.load_bars(symbol, timeframe)
+        if cached_data and cached_data.count() > 0:
+            asset = self.assets.get_asset(symbol)
+            if not asset:
+                self.assets.add_asset(symbol, cached_data)
+            df = cached_data.to_dataframe()
+            indicators = tab.get_indicators()
+            tab.chart_view.overlay_lines.clear()
+            tab.clear_indicator_panels()
+            tab.load_data(df, symbol, timeframe)
+            for ind in indicators:
+                colors = ind.get('colors', {})
+                indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, ind.get('params'), colors=colors)
+                if indicator:
+                    if ind.get('type') == 'overlay':
+                        visible = ind.get('visible', True)
+                        for line in indicator.lines:
+                            tab.chart_view.add_indicator_line(line, visible=visible, unique_name=ind['name'])
+                    else:
+                        if ind.get('visible', True):
+                            tab.add_indicator_panel(indicator, df)
+            tab.chart_view.plot_candlesticks(df, symbol)
+            tab.chart_view._needs_view_reset = True
+            self.chart_tabs.update_tab_label(symbol, timeframe)
+            self.save_session()
+        else:
+            self.fetch_symbol(symbol, timeframe)
     
     def on_add_indicator(self):
         from .indicator_dialog import IndicatorDialog
@@ -1116,7 +1180,9 @@ class PyStalkerWindow(QMainWindow):
         if not asset:
             return
         
-        df = asset.to_dataframe()
+        df = self._resolve_df(asset)
+        if df is None or df.empty:
+            return
         
         tab.clear_indicators()
         
@@ -1226,6 +1292,10 @@ class PyStalkerWindow(QMainWindow):
     def on_chart_tab_changed(self, index):
         tab = self.chart_tabs.get_current_tab()
         if tab:
+            self.current_symbol = tab.symbol
+            self.timeframe_combo.blockSignals(True)
+            self.timeframe_combo.setCurrentText(tab.interval)
+            self.timeframe_combo.blockSignals(False)
             style = tab.chart_view.chart_style
             for s, action in self.chart_style_actions.items():
                 action.setChecked(s == style)
@@ -1258,7 +1328,9 @@ class PyStalkerWindow(QMainWindow):
         asset = self.assets.get_asset(tab.symbol)
         if not asset:
             return
-        df = asset.to_dataframe()
+        df = self._resolve_df(asset)
+        if df is None or df.empty:
+            return
         
         dialog = IndicatorDialog(self, existing_indicators=tab.get_indicators())
         indicator_name_key = ind.get('indicator_name', ind.get('name', ''))
@@ -1280,7 +1352,11 @@ class PyStalkerWindow(QMainWindow):
         
         for param_name, value in ind.get('params', {}).items():
             if param_name in dialog.param_widgets:
-                dialog.param_widgets[param_name].setValue(value)
+                widget = dialog.param_widgets[param_name]
+                if isinstance(widget, QDoubleSpinBox):
+                    widget.setValue(float(value))
+                else:
+                    widget.setValue(int(value))
         
         saved_hlines = ind.get('hlines', [])
         if saved_hlines and dialog.hline_levels:
@@ -1555,17 +1631,6 @@ class PyStalkerWindow(QMainWindow):
                         item_obj.update()
                     tab.chart_view.snap_drawing_points(d)
             tab.chart_view._update_hline_labels()
-    
-    def restore_settings(self):
-        settings = QSettings("PyStalker", "PyStalker")
-        
-        geometry = settings.value("geometry")
-        if geometry:
-            self.restoreGeometry(geometry)
-        
-        state = settings.value("windowState")
-        if state:
-            self.restoreState(state)
     
     def closeEvent(self, event):
         self.save_session()

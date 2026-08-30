@@ -34,6 +34,7 @@ class ChartTab(QWidget):
         self._updating = False
         self._indicator_panels = {}
         self._indicator_connected = False
+        self._database = None
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -154,30 +155,21 @@ class ChartTab(QWidget):
             self.clear_indicator_panels()
     
     def on_colors_changed(self):
-        if self.symbol and self.chart_view.is_spread:
-            from ..core.database import Database
-            db = Database()
-            db.save_spread_lines(self.symbol,
+        if self.symbol and self.chart_view.is_spread and self._database:
+            self._database.save_spread_lines(self.symbol,
                                  self.chart_view.spread_symbol1,
                                  self.chart_view.spread_symbol2,
                                  self.chart_view.spread_color1,
                                  self.chart_view.spread_color2)
-            db.close()
     
     def on_indicator_visibility_changed(self, unique_name: str, visible: bool):
-        """Called when visibility is toggled from the chart legend"""
-        # Update the indicators list
         for ind in self.indicators:
             if ind.get('name') == unique_name:
                 ind['visible'] = visible
                 break
         
-        # Save to database
-        if hasattr(self, 'symbol') and self.symbol:
-            from ..core.database import Database
-            db = Database()
-            db.save_chart_indicators(self.symbol, self.indicators)
-            db.close()
+        if hasattr(self, 'symbol') and self.symbol and self._database:
+            self._database.save_chart_indicators(self.symbol, self.indicators)
     
     def get_view_state(self):
         chart_state = self.chart_view.get_view_state()
@@ -238,7 +230,7 @@ class ChartTabWidget(QTabWidget):
             return self.widget(index)
         return None
     
-    def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True):
+    def add_chart_tab(self, symbol: str, interval: str = '1d', set_current: bool = True, database=None):
         if symbol in self.tabs:
             tab = self.tabs[symbol]
             index = self.indexOf(tab)
@@ -247,6 +239,8 @@ class ChartTabWidget(QTabWidget):
             return tab, False
         
         tab = ChartTab()
+        if database:
+            tab._database = database
         tab.chart_view.colors_changed.connect(
             lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color) if not tab.chart_view.is_spread else None
         )
@@ -256,6 +250,16 @@ class ChartTabWidget(QTabWidget):
         if set_current:
             self.setCurrentIndex(index)
         return tab, True
+    
+    def update_tab_label(self, symbol: str, interval: str):
+        if symbol in self.tabs:
+            tab = self.tabs[symbol]
+            idx = self.indexOf(tab)
+            if idx >= 0:
+                if interval and interval != '1d':
+                    self.setTabText(idx, f"{symbol} ({interval})")
+                else:
+                    self.setTabText(idx, symbol)
     
     def get_current_symbol(self) -> str:
         tab = self.get_current_tab()
