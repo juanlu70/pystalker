@@ -1,6 +1,7 @@
 """
 PyStalker - SQLite Database for storing chart data
 """
+
 import json
 import sqlite3
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from .data import Bar, BarData
+
 
 class Database:
     def __init__(self, db_path: str = None):
@@ -792,3 +794,4 @@ class Database:
         if self.conn:
             self.conn.close()
             self.conn = None
+

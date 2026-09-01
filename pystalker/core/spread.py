@@ -28,3 +28,4 @@ def calculate_spread(df1: pd.DataFrame, df2: pd.DataFrame, start_date: str):
     series2 = (merged['Close2'] / base2) * 100.0
     
     return merged.index, series1, series2
+
