@@ -20,6 +20,12 @@ class PlotLine:
     color: str = 'white'
     line_type: str = 'line'
     width: int = 1
+    
+    @property
+    def key(self):
+        if '(' in self.name:
+            return self.name[:self.name.index('(')]
+        return self.name
 
 class Indicator:
     OVERLAY = 'overlay'
@@ -48,6 +54,8 @@ class IndicatorManager:
         'EMA': {'func': 'EMA', 'params': {'period': 20}, 'type': Indicator.OVERLAY},
         'BBANDS': {'func': 'BBANDS', 'params': {'period': 20, 'nbdevup': 2, 'nbdevdn': 2}, 'type': Indicator.OVERLAY},
         'SAR': {'func': 'SAR', 'params': {'acceleration': 0.02, 'maximum': 0.2}, 'type': Indicator.OVERLAY},
+        'SuperTrend': {'func': 'SUPERTREND', 'params': {'period': 10, 'multiplier': 3.0}, 'type': Indicator.OVERLAY},
+        'Donchian': {'func': 'DONCHIAN', 'params': {'period': 20}, 'type': Indicator.OVERLAY},
         'ML Predict (Random Forest)': {'func': 'ML_PREDICT_RF', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
         'ML Predict (XGBoost)': {'func': 'ML_PREDICT_XGB', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
     }
@@ -80,6 +88,17 @@ class IndicatorManager:
             {'name': 'Lower', 'color': '#95E1D3'},
         ],
         'SAR': [{'name': 'SAR', 'color': '#00CED1'}],
+        'SuperTrend': [
+            {'name': 'Up', 'color': '#00FF7F'},
+            {'name': 'Down', 'color': '#FF6B6B'},
+            {'name': 'Upper', 'color': '#FF6B6B'},
+            {'name': 'Lower', 'color': '#4ECDC4'},
+        ],
+        'Donchian': [
+            {'name': 'Upper', 'color': '#FF6B6B'},
+            {'name': 'Middle', 'color': '#4ECDC4'},
+            {'name': 'Lower', 'color': '#95E1D3'},
+        ],
         'MACD': [
             {'name': 'MACD', 'color': '#4169E1'},
             {'name': 'Signal', 'color': '#FF8C00'},
@@ -142,6 +161,20 @@ class IndicatorManager:
             if params:
                 default_params.update(params)
             result = _calculate_ml_predict(data, default_params, colors or {}, model_type='xgb')
+            return result
+        
+        if name == 'SuperTrend':
+            default_params = IndicatorManager.ALL_INDICATORS[name]['params'].copy()
+            if params:
+                default_params.update(params)
+            result = _calculate_supertrend(data, default_params, colors or {})
+            return result
+        
+        if name == 'Donchian':
+            default_params = IndicatorManager.ALL_INDICATORS[name]['params'].copy()
+            if params:
+                default_params.update(params)
+            result = _calculate_donchian(data, default_params, colors or {})
             return result
         
         if not TALIB_AVAILABLE:
@@ -261,6 +294,147 @@ class IndicatorManager:
             return indicator
         except Exception:
             return None
+
+
+def _calculate_supertrend(data: pd.DataFrame, params: dict, line_colors: dict) -> Indicator:
+    period = int(params.get('period', 10))
+    multiplier = float(params.get('multiplier', 3.0))
+    
+    high = data['High'].values.astype(float)
+    low = data['Low'].values.astype(float)
+    close = data['Close'].values.astype(float)
+    n = len(data)
+    
+    if n < period + 1:
+        return None
+    
+    hl2 = (high + low) / 2.0
+    
+    atr = np.full(n, np.nan)
+    if TALIB_AVAILABLE:
+        try:
+            atr_raw = talib.ATR(high, low, close, timeperiod=period)
+            if atr_raw is not None:
+                atr = atr_raw
+        except Exception:
+            pass
+    
+    if np.all(np.isnan(atr)):
+        tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(close, 1)), np.abs(low - np.roll(close, 1))))
+        tr[0] = high[0] - low[0]
+        atr[period - 1] = np.mean(tr[1:period])
+        for i in range(period, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    
+    upper_band = hl2 + multiplier * atr
+    lower_band = hl2 - multiplier * atr
+    
+    supertrend = np.full(n, np.nan)
+    direction = np.ones(n, dtype=int)
+    
+    for i in range(1, n):
+        if np.isnan(atr[i]):
+            upper_band[i] = np.nan
+            lower_band[i] = np.nan
+            continue
+        
+        if not np.isnan(supertrend[i - 1]):
+            if direction[i - 1] == 1:
+                lower_band[i] = max(lower_band[i], lower_band[i - 1])
+                upper_band[i] = hl2[i] + multiplier * atr[i]
+            else:
+                upper_band[i] = min(upper_band[i], upper_band[i - 1])
+                lower_band[i] = hl2[i] - multiplier * atr[i]
+        
+        if np.isnan(supertrend[i - 1]):
+            if close[i] > lower_band[i]:
+                direction[i] = 1
+            elif close[i] < upper_band[i]:
+                direction[i] = -1
+            else:
+                direction[i] = 1
+        elif direction[i - 1] == 1:
+            if close[i] < lower_band[i]:
+                direction[i] = -1
+            else:
+                direction[i] = 1
+        else:
+            if close[i] > upper_band[i]:
+                direction[i] = 1
+            else:
+                direction[i] = -1
+        
+        if direction[i] == 1:
+            supertrend[i] = lower_band[i]
+        else:
+            supertrend[i] = upper_band[i]
+    
+    supertrend_up = np.full(n, np.nan)
+    supertrend_down = np.full(n, np.nan)
+    for i in range(n):
+        if direction[i] == 1:
+            supertrend_up[i] = supertrend[i]
+        else:
+            supertrend_down[i] = supertrend[i]
+    
+    indicator = Indicator('SuperTrend', Indicator.OVERLAY)
+    indicator.parameters = params
+    indicator.add_line(PlotLine(
+        f'Up({period},{multiplier})', supertrend_up,
+        line_colors.get('Up', '#00FF7F')
+    ))
+    indicator.add_line(PlotLine(
+        f'Down({period},{multiplier})', supertrend_down,
+        line_colors.get('Down', '#FF6B6B')
+    ))
+    indicator.add_line(PlotLine(
+        'Upper', upper_band,
+        line_colors.get('Upper', '#FF6B6B')
+    ))
+    indicator.add_line(PlotLine(
+        'Lower', lower_band,
+        line_colors.get('Lower', '#4ECDC4')
+    ))
+    
+    return indicator
+
+
+def _calculate_donchian(data: pd.DataFrame, params: dict, line_colors: dict) -> Indicator:
+    period = int(params.get('period', 20))
+    
+    high = data['High'].values.astype(float)
+    low = data['Low'].values.astype(float)
+    close = data['Close'].values.astype(float)
+    n = len(data)
+    
+    if n < period:
+        return None
+    
+    upper_band = np.full(n, np.nan)
+    lower_band = np.full(n, np.nan)
+    middle_band = np.full(n, np.nan)
+    
+    for i in range(period - 1, n):
+        upper_band[i] = np.max(high[i - period + 1:i + 1])
+        lower_band[i] = np.min(low[i - period + 1:i + 1])
+        middle_band[i] = (upper_band[i] + lower_band[i]) / 2.0
+    
+    indicator = Indicator('Donchian', Indicator.OVERLAY)
+    indicator.parameters = params
+    indicator.add_line(PlotLine(
+        f'Upper({period})', upper_band,
+        line_colors.get('Upper', '#FF6B6B')
+    ))
+    indicator.add_line(PlotLine(
+        f'Middle({period})', middle_band,
+        line_colors.get('Middle', '#4ECDC4')
+    ))
+    indicator.add_line(PlotLine(
+        f'Lower({period})', lower_band,
+        line_colors.get('Lower', '#95E1D3')
+    ))
+    
+    return indicator
 
 
 def _build_ml_features(data: pd.DataFrame):

@@ -1,10 +1,12 @@
 """
 PyStalker - Core data structures
 """
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 import pandas as pd
+
 
 @dataclass
 class Bar:
@@ -96,3 +98,4 @@ class ChartAssets:
     
     def get_symbols(self) -> list:
         return list(self.assets.keys())
+

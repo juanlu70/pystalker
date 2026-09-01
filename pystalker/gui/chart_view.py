@@ -354,6 +354,7 @@ class ChannelItem(pg.GraphicsObject):
 class ChartView(QWidget):
     indicator_added = pyqtSignal(str)
     indicator_visibility_changed = pyqtSignal(str, bool)
+    line_visibility_changed = pyqtSignal(str, str, bool)
     range_changed = pyqtSignal(float, float, object)
     colors_changed = pyqtSignal()
     chartStyleChanged = pyqtSignal(str)
@@ -1898,6 +1899,24 @@ class ChartView(QWidget):
                 if self.df is not None:
                     self.plot_candlesticks(self.df, self.symbol)
                 break
+    
+    def set_line_visibility(self, unique_name: str, line_name: str, visible: bool):
+        """Set visibility of a specific line within an indicator"""
+        for overlay_line in self.overlay_lines:
+            if overlay_line.unique_name == unique_name and overlay_line.plot_line.key == line_name:
+                overlay_line.visible = visible
+                self.line_visibility_changed.emit(unique_name, line_name, visible)
+                if self.df is not None:
+                    self.plot_candlesticks(self.df, self.symbol)
+                break
+    
+    def get_line_visibility(self, unique_name: str) -> dict:
+        """Get visibility dict for all lines of an indicator"""
+        result = {}
+        for overlay_line in self.overlay_lines:
+            if overlay_line.unique_name == unique_name:
+                result[overlay_line.plot_line.key] = overlay_line.visible
+        return result
     def clear_indicators(self):
         self.overlay_lines.clear()
         if self.df is not None:

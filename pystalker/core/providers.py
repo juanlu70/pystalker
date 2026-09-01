@@ -1,12 +1,14 @@
 """
 PyStalker - Data providers for downloading/importing market data
 """
+
 import os
 from datetime import datetime
 from typing import Optional
 import pandas as pd
 
 from .data import Bar, BarData
+
 
 class DataProvider:
     """Base class for data providers"""
@@ -67,6 +69,7 @@ class YahooFinanceProvider(DataProvider):
         
         return bar_data
 
+
 class CSVProvider(DataProvider):
     """CSV file data provider"""
     
@@ -124,6 +127,7 @@ class CSVProvider(DataProvider):
         
         return bar_data
 
+
 class DataManager:
     """Manages multiple data providers and cached data"""
     
@@ -155,3 +159,4 @@ class DataManager:
     
     def clear_cache(self):
         self.cache.clear()
+
