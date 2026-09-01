@@ -858,40 +858,11 @@ class PyStalkerWindow(QMainWindow):
         if symbol not in self.navigator.get_assets():
             self.navigator.add_asset(symbol)
         
-        tab, is_new = self.chart_tabs.add_chart_tab(symbol, interval, database=self.database)
-        if is_new:
-            tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
-            tab.chart_view.drawingDoubleClicked.connect(self.on_drawing_double_clicked)
-            tab.chart_view.spreadStartDateChangeRequested.connect(self.on_spread_start_date_change)
-        
-        df = bar_data.to_dataframe()
-        indicators = tab.get_indicators()
-        tab.save_splitter_state()
-        tab.chart_view.overlay_lines.clear()
-        tab.clear_indicator_panels()
-        tab.load_data(df, symbol, interval)
-        
-        for ind in indicators:
-            colors = ind.get('colors', {})
-            indicator = IndicatorManager.calculate_indicator(ind['indicator_name'], df, ind.get('params'), colors=colors)
-            if indicator:
-                if ind.get('type') == 'overlay':
-                    line_vis = ind.get('line_visibility', {})
-                    for line in indicator.lines:
-                        tab.chart_view.add_indicator_line(line, visible=line_vis.get(line.key, True), unique_name=ind['name'])
-                else:
-                    if ind.get('visible', True):
-                        tab.add_indicator_panel(indicator, df)
-        
-        tab.restore_splitter_state()
-        tab.chart_view.plot_candlesticks(df, symbol)
-        tab.chart_view._needs_view_reset = True
-        self.chart_tabs.update_tab_label(symbol, interval)
+        self.load_chart(symbol, interval)
         self.current_symbol = symbol
         
         self.status_bar.showMessage(f"Downloaded {symbol} ({bar_data.count()} bars)")
         self._refresh_copies_of(symbol, bar_data)
-        self.save_session()
     
     def on_download_error(self, error_msg):
         if self.download_dialog and self.download_dialog.isVisible():

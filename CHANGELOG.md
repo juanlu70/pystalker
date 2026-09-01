@@ -275,4 +275,7 @@
 - `middle_color` saved/loaded via `params` in `database.save_drawings`/`load_drawings`.
 - `on_drawing_double_clicked` applies `middle_color` changes to `ChannelItem` and regenerates picture.
 
+2026-07-11
+
+- Fixed drawing "Settings" context menu not opening the settings dialog on freshly downloaded symbols. `on_download_finished` now routes through `load_chart` so the `drawingDoubleClicked` signal (and other chart signals) get connected for new tabs, instead of creating a bare tab via `add_chart_tab` + `load_data` with no signal wiring.
 
