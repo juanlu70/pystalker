@@ -20,6 +20,12 @@ class PlotLine:
     color: str = 'white'
     line_type: str = 'line'
     width: int = 1
+    
+    @property
+    def key(self):
+        if '(' in self.name:
+            return self.name[:self.name.index('(')]
+        return self.name
 
 class Indicator:
     OVERLAY = 'overlay'

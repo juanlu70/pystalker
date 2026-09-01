@@ -1,5 +1,17 @@
 # CHANGELOG
 
+2026-08-30
+
+- Fixed indicator panel sizes resetting to default after data update/redraw.
+- Added `save_splitter_state()`/`restore_splitter_state()` to ChartTab to preserve user-adjusted panel sizes across data updates.
+- Added per-line visibility for overlay indicators (e.g., hide Up/Down lines in SuperTrend independently).
+- Added `line_visibility` dict persisted in database alongside indicator data.
+- Fixed line name mismatch: `PlotLine.key` property strips parameter suffix (e.g., `Up(10,3.0)` → `Up`) for consistent `line_visibility` lookups.
+- Added `line_visibility_changed` signal in ChartView to sync per-line visibility changes to indicator data.
+- Added `line_visibility` field to `add_indicator()` in ChartTab.
+- Added per-line visibility checkboxes in IndicatorDialog color section.
+- Added Donchian Channel overlay indicator (params: period=20).
+
 2026-07-27
 
 - Added SuperTrend overlay indicator (params: period=10, multiplier=3.0).

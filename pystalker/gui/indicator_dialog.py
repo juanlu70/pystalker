@@ -22,6 +22,7 @@ class IndicatorDialog(QDialog):
         self.param_widgets = {}
         self.current_indicator = None
         self.line_colors = {}
+        self.line_visibility = {}
         self.hline_levels = []
         self.existing_indicators = existing_indicators or []
         
@@ -123,7 +124,9 @@ class IndicatorDialog(QDialog):
         
         self.param_widgets.clear()
         self.line_colors.clear()
+        self.line_visibility.clear()
         self._color_labels = {}
+        self._visibility_checks = {}
         self.hline_levels = []
         
         all_indicators = IndicatorManager.ALL_INDICATORS
@@ -136,6 +139,7 @@ class IndicatorDialog(QDialog):
         line_defaults = IndicatorManager.LINE_DEFAULTS.get(indicator_name, [])
         for line_def in line_defaults:
             self.line_colors[line_def['name']] = line_def['color']
+            self.line_visibility[line_def['name']] = True
         
         for param_name, default_value in params.items():
             label = QLabel(f"{param_name}:")
@@ -173,9 +177,14 @@ class IndicatorDialog(QDialog):
                 btn = QPushButton(f"Choose {line_name} Color")
                 btn.clicked.connect(lambda checked, n=line_name: self.choose_line_color(n))
                 
+                vis_check = QCheckBox("Visible")
+                vis_check.setChecked(True)
+                self._visibility_checks[line_name] = vis_check
+                
                 row_layout = QHBoxLayout()
                 row_layout.addWidget(color_label)
                 row_layout.addWidget(btn)
+                row_layout.addWidget(vis_check)
                 row_layout.addStretch()
                 self.colors_layout.addRow(f"{line_name}:", row_layout)
         else:
@@ -242,6 +251,14 @@ class IndicatorDialog(QDialog):
     def get_indicator_colors(self):
         return dict(self.line_colors)
     
+    def get_indicator_line_visibility(self):
+        result = {}
+        for line_name, checkbox in self._visibility_checks.items():
+            result[line_name] = checkbox.isChecked()
+        if not result and self.line_visibility:
+            result = dict(self.line_visibility)
+        return result
+    
     def get_indicator_hlines(self):
         result = []
         for h in self.hline_levels:
@@ -270,10 +287,19 @@ class EditIndicatorsDialog(QDialog):
         
         self.indicator_list = QListWidget()
         for ind in self.indicators:
-            visible_icon = "👁" if ind.get('visible', True) else "🚫"
-            color_box = f" [{ind.get('color', '#FFFFFF')}]"
             display_name = ind.get('name', ind.get('indicator_name', 'Unknown'))
-            self.indicator_list.addItem(f"{visible_icon} {display_name}{color_box} - {ind.get('params', {})}")
+            line_vis = ind.get('line_visibility', {})
+            if line_vis:
+                hidden = [k for k, v in line_vis.items() if not v]
+                if hidden:
+                    vis_str = f" (hidden: {', '.join(hidden)})"
+                else:
+                    vis_str = ""
+            else:
+                vis_icon = "👁" if ind.get('visible', True) else "🚫"
+                vis_str = f" {vis_icon}"
+            color_box = f" [{ind.get('color', '#FFFFFF')}]"
+            self.indicator_list.addItem(f"{display_name}{color_box}{vis_str} - {ind.get('params', {})}")
         list_layout.addWidget(self.indicator_list)
         
         btn_layout = QHBoxLayout()
@@ -323,6 +349,12 @@ class EditIndicatorsDialog(QDialog):
                 dialog.line_colors = {ld['name']: ind['color'] for ld in line_defaults}
             dialog._update_color_labels()
         
+        saved_line_vis = ind.get('line_visibility', {})
+        for line_name, checkbox in dialog._visibility_checks.items():
+            if line_name in saved_line_vis:
+                checkbox.setChecked(saved_line_vis[line_name])
+                dialog.line_visibility[line_name] = saved_line_vis[line_name]
+        
         for param_name, value in ind.get('params', {}).items():
             if param_name in dialog.param_widgets:
                 widget = dialog.param_widgets[param_name]
@@ -349,7 +381,8 @@ class EditIndicatorsDialog(QDialog):
                 'color': dialog.get_indicator_color(),
                 'colors': dialog.get_indicator_colors(),
                 'hlines': dialog.get_indicator_hlines(),
-                'visible': ind.get('visible', True)
+                'visible': ind.get('visible', True),
+                'line_visibility': dialog.get_indicator_line_visibility()
             }
             self.refresh_list()
     
@@ -371,14 +404,22 @@ class EditIndicatorsDialog(QDialog):
     def refresh_list(self):
         self.indicator_list.clear()
         for ind in self.indicators:
-            visible_icon = "👁" if ind.get('visible', True) else "🚫"
             display_name = ind.get('name', ind.get('indicator_name', 'Unknown'))
             colors = ind.get('colors', {})
+            line_vis = ind.get('line_visibility', {})
+            if line_vis:
+                hidden = [k for k, v in line_vis.items() if not v]
+                if hidden:
+                    vis_str = f" (hidden: {', '.join(hidden)})"
+                else:
+                    vis_str = ""
+            else:
+                vis_str = ""
             if colors:
                 color_str = ', '.join(f"{k}: {v}" for k, v in colors.items())
             else:
                 color_str = ind.get('color', '#FFFFFF')
-            self.indicator_list.addItem(f"{visible_icon} {display_name} [{color_str}] - {ind.get('params', {})}")
+            self.indicator_list.addItem(f"{display_name} [{color_str}]{vis_str} - {ind.get('params', {})}")
     
     def accept_changes(self):
         self.result_data = self.indicators
