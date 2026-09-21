@@ -2,6 +2,10 @@
 
 2026-08-30
 
+- Added Market Cipher B (Cipher B) as a separate indicator panel with WT1, WT2, and MFI lines.
+- Default params: wt_channel_len=9, wt_avg_len=12, wt_ma_len=3, rsi_len=14, mfi_period=60, mfi_multiplier=150.
+- Horizontal levels at ±53 and ±60 for overbought/oversold zones.
+- Default colors: WT1=#3A90FF, WT2=#FF8C00, MFI=#26A69A.
 - Fixed indicator panel sizes resetting to default after data update/redraw.
 - Added `save_splitter_state()`/`restore_splitter_state()` to ChartTab to preserve user-adjusted panel sizes across data updates.
 - Added per-line visibility for overlay indicators (e.g., hide Up/Down lines in SuperTrend independently).

@@ -73,6 +73,7 @@ class IndicatorManager:
         'WILLR': {'func': 'WILLR', 'params': {'period': 14}, 'type': Indicator.INDICATOR},
         'OBV': {'func': 'OBV', 'params': {}, 'type': Indicator.INDICATOR},
         'MFI': {'func': 'MFI', 'params': {'period': 14}, 'type': Indicator.INDICATOR},
+        'Cipher B': {'func': 'CIPHER_B', 'params': {'wt_channel_len': 9, 'wt_avg_len': 12, 'wt_ma_len': 3, 'rsi_len': 14, 'mfi_period': 60, 'mfi_multiplier': 150}, 'type': Indicator.INDICATOR},
     }
     
     ALL_INDICATORS = {**OVERLAY_INDICATORS, **SEPARATE_INDICATORS}
@@ -121,6 +122,11 @@ class IndicatorManager:
         'WILLR': [{'name': 'WILLR', 'color': '#FFD700'}],
         'OBV': [{'name': 'OBV', 'color': '#00CED1'}],
         'MFI': [{'name': 'MFI', 'color': '#9370DB'}],
+        'Cipher B': [
+            {'name': 'WT1', 'color': '#3A90FF'},
+            {'name': 'WT2', 'color': '#FF8C00'},
+            {'name': 'MFI', 'color': '#26A69A'},
+        ],
     }
     
     HLINE_DEFAULTS = {
@@ -130,6 +136,12 @@ class IndicatorManager:
         'STOCHRSI': [{'level': 80, 'color': '#FF6B6B'}, {'level': 20, 'color': '#4ECDC4'}],
         'WILLR': [{'level': -20, 'color': '#FF6B6B'}, {'level': -80, 'color': '#4ECDC4'}],
         'MFI': [{'level': 80, 'color': '#FF6B6B'}, {'level': 20, 'color': '#4ECDC4'}],
+        'Cipher B': [
+            {'level': 53, 'color': '#808080'},
+            {'level': -53, 'color': '#808080'},
+            {'level': 60, 'color': '#FF6B6B'},
+            {'level': -60, 'color': '#FF6B6B'},
+        ],
     }
     
     @staticmethod
@@ -175,6 +187,13 @@ class IndicatorManager:
             if params:
                 default_params.update(params)
             result = _calculate_donchian(data, default_params, colors or {})
+            return result
+        
+        if name == 'Cipher B':
+            default_params = IndicatorManager.ALL_INDICATORS[name]['params'].copy()
+            if params:
+                default_params.update(params)
+            result = _calculate_cipher_b(data, default_params, colors or {})
             return result
         
         if not TALIB_AVAILABLE:
@@ -433,6 +452,101 @@ def _calculate_donchian(data: pd.DataFrame, params: dict, line_colors: dict) -> 
         f'Lower({period})', lower_band,
         line_colors.get('Lower', '#95E1D3')
     ))
+    
+    return indicator
+
+
+def _ema(values, period):
+    result = np.full(len(values), np.nan)
+    if len(values) < period:
+        return result
+    alpha = 2.0 / (period + 1)
+    start = np.nanmean(values[:period])
+    result[period - 1] = start
+    for i in range(period, len(values)):
+        if np.isnan(result[i - 1]):
+            result[i] = values[i]
+        else:
+            result[i] = alpha * values[i] + (1 - alpha) * result[i - 1]
+    return result
+
+
+def _sma(values, period):
+    result = np.full(len(values), np.nan)
+    if len(values) < period:
+        return result
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1:i + 1]
+        valid = window[~np.isnan(window)]
+        if len(valid) >= period // 2:
+            result[i] = np.mean(valid)
+    return result
+
+
+def _rsi(close, period):
+    delta = np.diff(close, prepend=close[0])
+    gain = np.where(delta > 0, delta, 0.0)
+    loss = np.where(delta < 0, -delta, 0.0)
+    avg_gain = _ema(gain, period)
+    avg_loss = _ema(loss, period)
+    rs = np.where(avg_loss != 0, avg_gain / avg_loss, 100.0)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi
+
+
+def _calculate_cipher_b(data: pd.DataFrame, params: dict, line_colors: dict) -> Indicator:
+    wt_channel_len = int(params.get('wt_channel_len', 9))
+    wt_avg_len = int(params.get('wt_avg_len', 12))
+    wt_ma_len = int(params.get('wt_ma_len', 3))
+    rsi_len = int(params.get('rsi_len', 14))
+    mfi_period = int(params.get('mfi_period', 60))
+    mfi_multiplier = float(params.get('mfi_multiplier', 150))
+    
+    high = data['High'].values.astype(float)
+    low = data['Low'].values.astype(float)
+    close = data['Close'].values.astype(float)
+    opn = data['Open'].values.astype(float)
+    n = len(data)
+    
+    if n < max(wt_channel_len, wt_avg_len, wt_ma_len, rsi_len, mfi_period) + 1:
+        return None
+    
+    ap = (high + low + close) / 3.0
+    
+    esa = _ema(ap, wt_channel_len)
+    d = _ema(np.abs(ap - esa), wt_channel_len)
+    ci = np.where(d != 0, (ap - esa) / (0.015 * d), 0.0)
+    wt1 = _ema(ci, wt_avg_len)
+    wt2 = _sma(wt1, wt_ma_len)
+    
+    mfi_raw = np.where(
+        (high - low) != 0,
+        (close - opn) / (high - low) * mfi_multiplier,
+        0.0
+    )
+    mfi = _sma(mfi_raw, mfi_period)
+    
+    indicator = Indicator('Cipher B', Indicator.INDICATOR)
+    indicator.parameters = params
+    indicator.add_line(PlotLine(
+        f'WT1({wt_channel_len},{wt_avg_len})', wt1,
+        line_colors.get('WT1', '#3A90FF')
+    ))
+    indicator.add_line(PlotLine(
+        f'WT2({wt_ma_len})', wt2,
+        line_colors.get('WT2', '#FF8C00')
+    ))
+    indicator.add_line(PlotLine(
+        'MFI', mfi,
+        line_colors.get('MFI', '#26A69A')
+    ))
+    
+    indicator.hlines = [
+        {'level': 53, 'color': '#808080'},
+        {'level': -53, 'color': '#808080'},
+        {'level': 60, 'color': '#FF6B6B'},
+        {'level': -60, 'color': '#FF6B6B'},
+    ]
     
     return indicator
 
