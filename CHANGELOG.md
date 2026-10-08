@@ -1,5 +1,36 @@
 # CHANGELOG
 
+2026-10-08
+
+- Crosshair now replaces the mouse cursor when the toolbar Crosshair icon is activated, and the normal mouse cursor is restored when deactivated.
+  - Implemented the previously missing `ChartView.set_crosshair_enabled()` (the toolbar Crosshair button existed but raised `AttributeError` when toggled).
+  - Icon checked (default): hovering the main graph shows ONLY the full-view crosshair — the OS cursor is hidden (blank) over the plot; leaving the graph restores the normal cursor.
+  - Icon unchecked: no crosshair lines, normal mouse cursor over the graph.
+  - Draw mode keeps its own crosshair cursor and hides the full-view crosshair; on exit, the crosshair returns on the next mouse move.
+  - The toggle applies to the current tab, matching the existing per-tab chart actions.
+- Added full-view crosshair to the main graph: two dashed semi-transparent white lines (horizontal + vertical) that span the whole visible chart and follow the mouse, replacing the small pointer-only crosshair — makes it fast to see if a value is above or below another.
+  - The vertical line snaps to the bar under the cursor; the horizontal line tracks the exact value level.
+  - Hidden automatically when the mouse leaves the graph, when the tab is hidden, and while in draw mode (draw mode keeps its own crosshair cursor).
+  - Lines are non-movable (no interference with drawing clicks, context menus, or panning) and added with `ignoreBounds` so they never affect zoom/auto-range.
+  - New `ChartView` members: `crosshair_h`, `crosshair_v`, `_update_crosshair()`, `_set_crosshair_visible()`, `leaveEvent`, `hideEvent`.
+  - Verified offscreen: visibility, positioning and snapping, hide on leave/draw mode, survival across chart redraws (no duplicates), no range side effects, and actual pixel rendering of both full-span lines; wheel-pan performance unaffected (~5.5 ms/frame).
+- Fixed "Create Spread" not offering assets that exist in the database but are not open as chart tabs (e.g. SAN.MC / BBVA.MC): the dialog was fed only in-memory assets, so database-only assets couldn't be selected.
+- The spread dialog now lists the union of in-memory assets and all symbols from the database (sorted); the rest of the flow already supported loading the chosen assets from the database on demand.
+- Spread creation verified end-to-end offscreen with an isolated database seeded with real SAN.MC/BBVA.MC data: both assets selectable with no tabs open, spread chart opens with both lines and the white diff line.
+- **Chart panning/scrolling accelerated ~9x on long-history graphs** (e.g. BTC-USD, 12 years / 4,400+ bars): full-frame render while wheel-scrolling dropped from ~135 ms to ~15 ms in offscreen benchmarks with real BTC-USD data.
+  - `CandlestickItem` no longer records/replays a QPicture of the whole history: bars are drawn directly in `paint()`, clipped to the visible X range (with a small margin), using cached pens/brushes — per-frame cost is now proportional to the visible bars, not total history.
+  - `VolumeItem.setScale()`/`setYOffset()` are now O(1): scale and offset are applied at paint time instead of re-recording the entire volume picture (the old code re-recorded all volume bars twice on every pan/zoom step — this was the dominant cost, ~88 ms/frame on BTC-USD).
+  - Volume bars are also drawn clipped to the visible X range with cached pens/brushes; `boundingRect()` now derives from data + current scale/offset, and `prepareGeometryChange()` is called on scale/offset updates.
+  - Fixed console errors `AttributeError: autoRangeEnabled` (pyqtgraph 0.14 traceback printed on every chart redraw/indicator rebuild): they were caused by per-curve `setClipToView(True)`, which triggered pyqtgraph's clip path while the curve was being added to the scene (parentless, so the resolved "view" was the PlotWidget, which lacks `autoRangeEnabled`). Per-curve `setClipToView`/`setDownsampling` calls were removed — `PlotItem.addItem` overrides them anyway, so they never took effect.
+  - Curve downsampling is now set at the PlotItem level (`plotItem.setDownsampling(auto=True, mode='peak')` in ChartView and IndicatorPanel), which pyqtgraph applies to every curve on add: auto peak downsampling is now actually active on main chart and indicator panel curves (bounded curve cost when zoomed out). `clipToView` is not used at all.
+  - Verified: 0 `autoRangeEnabled` occurrences through real-app flow (chart load, style switches, redraws, indicator panel add/rebuild) and full regression suite; wheel-pan performance unchanged (~6 ms/frame).
+  - Rendering verified pixel-against-pixel against the old implementation: identical except ±1px rasterization differences on some candle wick lines at half-pixel boundaries (QPicture replay vs direct draw) and less bleeding of out-of-view candles into the left axis margin.
+- Added white "Diff" line to spread charts: a third line in the spread graph showing the difference in points between the two normalized spread lines (series1 - series2, the same value the yellow hover legend shows as "Spread:").
+- The diff line is derived at render time (`Close - Series2`), so it needs no database or calculation changes and automatically works for both newly created spreads and spreads restored from the database.
+- Added a white "Diff" legend label in the upper-left corner of spread charts, below the two asset name labels.
+- Spread initial/reset Y-range (`set_initial_y_range`) now extends down to include the diff line so the white line is visible (it oscillates around 0 while the two normalized lines stay near 100).
+- New `ChartView` attributes: `spread_diff_color` (#FFFFFF), `spread_curve_diff`, `spread_legend_diff`.
+
 2026-08-30
 
 - Added Market Cipher B (Cipher B) as a separate indicator panel with WT1, WT2, and MFI lines.

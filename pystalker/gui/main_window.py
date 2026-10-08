@@ -610,9 +610,9 @@ class PyStalkerWindow(QMainWindow):
     
     def on_create_spread(self):
         from .spread_dialog import SpreadDialog
-        symbols = self.assets.get_symbols()
+        symbols = sorted(set(self.assets.get_symbols()) | set(self.database.get_symbols()))
         if len(symbols) < 2:
-            QMessageBox.information(self, "Create Spread", "You need at least 2 assets loaded to create a spread.")
+            QMessageBox.information(self, "Create Spread", "You need at least 2 assets in the database to create a spread.")
             return
         spreads = self.database.load_spreads()
         dialog = SpreadDialog(symbols, spreads, self)
