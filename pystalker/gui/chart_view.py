@@ -374,8 +374,11 @@ class ChartView(QWidget):
         self.spread_symbol2 = ''
         self.spread_color1 = '#00BFFF'
         self.spread_color2 = '#FF6B6B'
+        self.spread_diff_color = '#FFFFFF'
+        self.spread_curve_diff = None
         self.spread_legend1 = None
         self.spread_legend2 = None
+        self.spread_legend_diff = None
         self.overlay_lines = []
         self.indicator_curves = []
         self.drawings = []
@@ -409,6 +412,9 @@ class ChartView(QWidget):
         pg.setConfigOption('enableExperimental', True)
         
         self.plot_widget = pg.PlotWidget()
+        # PlotItem-level auto peak downsampling: applied to every curve added
+        # to this plot by PlotItem.addItem (per-curve calls get overridden).
+        self.plot_widget.plotItem.setDownsampling(auto=True, mode='peak')
         self.plot_widget.setBackground('#1e1e1e')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
@@ -442,6 +448,20 @@ class ChartView(QWidget):
         self.info_text.setFont(pg.QtGui.QFont('monospace', 10))
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
         
+        # Full-view crosshair: two dashed lines spanning the whole visible
+        # graph, following the mouse for quick value comparison.
+        # When active it replaces the mouse cursor (toolbar Crosshair toggle).
+        self.crosshair_enabled = True
+        crosshair_pen = pg.mkPen((255, 255, 255, 110), width=1, style=Qt.PenStyle.DashLine)
+        self.crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen=crosshair_pen, hoverPen=crosshair_pen)
+        self.crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen=crosshair_pen, hoverPen=crosshair_pen)
+        self.crosshair_h.setZValue(10)
+        self.crosshair_v.setZValue(10)
+        self.crosshair_h.setVisible(False)
+        self.crosshair_v.setVisible(False)
+        self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
+        self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
+        
         plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved, 
                                            rateLimit=60, slot=self.mouse_moved)
         self._mouse_proxy = plot_widget_proxy
@@ -450,6 +470,8 @@ class ChartView(QWidget):
         
         self.candlestick_item = None
         self.volume_item = None
+        self.line_curve = None
+        self.spread_curve2 = None
         self.visible_bars = 450
         self.scroll_speed = 50
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -816,6 +838,7 @@ class ChartView(QWidget):
             self.plot_widget.setMouseEnabled(x=False, y=False)
             self.info_text.setText("DRAW MODE - Left click: draw | ESC: exit")
             self.update_info_position()
+            self._set_crosshair_visible(False)
             crosshair_pixmap = QPixmap(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets', 'crosshair.xpm'))
             if crosshair_pixmap.isNull():
                 self.plot_widget.setCursor(Qt.CursorShape.CrossCursor)
@@ -1446,8 +1469,60 @@ class ChartView(QWidget):
                         self.info_text.setText(info)
                     self.update_info_position()
         
+        self._update_crosshair(mouse_point)
         if mouse_point and self.drawing_trendline and len(self.trendline_points) == 1:
             self._update_preview_line(mouse_point)
+    
+    def set_crosshair_enabled(self, enabled: bool):
+        """Toggle the full-view crosshair (toolbar Crosshair button).
+
+        When enabled, the crosshair replaces the mouse cursor over the graph;
+        when disabled, the normal mouse cursor is restored.
+        """
+        self.crosshair_enabled = enabled
+        if not enabled:
+            self._set_crosshair_visible(False)
+            if not self._draw_mode:
+                self.plot_widget.setCursor(Qt.CursorShape.ArrowCursor)
+    
+    def _update_crosshair(self, mouse_point):
+        """Move the full-view crosshair lines to the mouse position.
+
+        The vertical line snaps to the bar under the cursor; the horizontal
+        line follows the exact value so levels can be compared at a glance.
+        While active, the crosshair replaces the mouse cursor. Hidden when
+        the mouse is outside the graph, in draw mode, or disabled via the
+        toolbar.
+        """
+        active = (mouse_point is not None and self.crosshair_enabled
+                  and not self._draw_mode and self.df is not None and len(self.df) > 0)
+        self._set_crosshair_visible(active)
+        if not self._draw_mode:
+            # only the crosshair when active; normal mouse cursor otherwise
+            self.plot_widget.setCursor(Qt.CursorShape.BlankCursor if active else Qt.CursorShape.ArrowCursor)
+        if not active:
+            return
+        x = mouse_point.x()
+        x_idx = int(round(x))
+        if 0 <= x_idx < len(self.df):
+            x = float(x_idx)
+        self.crosshair_v.setPos(x)
+        self.crosshair_h.setPos(mouse_point.y())
+    
+    def _set_crosshair_visible(self, visible: bool):
+        for line in (self.crosshair_h, self.crosshair_v):
+            if line.isVisible() != visible:
+                line.setVisible(visible)
+    
+    def leaveEvent(self, event):
+        self._set_crosshair_visible(False)
+        if not self._draw_mode:
+            self.plot_widget.setCursor(Qt.CursorShape.ArrowCursor)
+        super().leaveEvent(event)
+    
+    def hideEvent(self, event):
+        self._set_crosshair_visible(False)
+        super().hideEvent(event)
     
     def wheelEvent(self, event: QWheelEvent):
         if self.df is None or len(self.df) == 0:
@@ -1575,8 +1650,10 @@ class ChartView(QWidget):
         self.candlestick_item = None
         self.line_curve = None
         self.spread_curve2 = None
+        self.spread_curve_diff = None
         self.spread_legend1 = None
         self.spread_legend2 = None
+        self.spread_legend_diff = None
         self.volume_item = None
         self.indicator_curves.clear()
         
@@ -1603,6 +1680,8 @@ class ChartView(QWidget):
         self.view_box.sigXRangeChanged.connect(self.update_ohlc_legend_position)
         self.view_box.sigXRangeChanged.connect(self._update_hline_labels)
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
+        self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
+        self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
         self._mouse_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved,
                                            rateLimit=60, slot=self.mouse_moved)
         
@@ -1631,12 +1710,18 @@ class ChartView(QWidget):
                 y2 = self.df['Series2'].values.astype(float)
                 self.spread_curve2 = pg.PlotDataItem(x, y2, pen=pg.mkPen(color=self.spread_color2, width=2), name=self.spread_symbol2)
                 self.plot_widget.addItem(self.spread_curve2)
+                y_diff = y - y2
+                self.spread_curve_diff = pg.PlotDataItem(x, y_diff, pen=pg.mkPen(color=self.spread_diff_color, width=2), name='Diff')
+                self.plot_widget.addItem(self.spread_curve_diff)
                 self.spread_legend1 = pg.TextItem(self.spread_symbol1, color=self.spread_color1, anchor=(0, 0))
                 self.spread_legend1.setFont(pg.QtGui.QFont('monospace', 10, pg.QtGui.QFont.Weight.Bold))
                 self.spread_legend2 = pg.TextItem(self.spread_symbol2, color=self.spread_color2, anchor=(0, 0))
                 self.spread_legend2.setFont(pg.QtGui.QFont('monospace', 10, pg.QtGui.QFont.Weight.Bold))
+                self.spread_legend_diff = pg.TextItem('Diff', color=self.spread_diff_color, anchor=(0, 0))
+                self.spread_legend_diff.setFont(pg.QtGui.QFont('monospace', 10, pg.QtGui.QFont.Weight.Bold))
                 self.plot_widget.addItem(self.spread_legend1, ignoreBounds=True)
                 self.plot_widget.addItem(self.spread_legend2, ignoreBounds=True)
+                self.plot_widget.addItem(self.spread_legend_diff, ignoreBounds=True)
                 self._update_spread_legend_position()
         elif self.chart_style == 'heikin_ashi':
             ha_df = self._heikin_ashi_df(self.df)
@@ -1799,6 +1884,8 @@ class ChartView(QWidget):
             self.spread_legend1.setPos(x_min + 2, y_max - gap)
             if self.spread_legend2:
                 self.spread_legend2.setPos(x_min + 2, y_max - gap * 2)
+            if self.spread_legend_diff:
+                self.spread_legend_diff.setPos(x_min + 2, y_max - gap * 3)
         except Exception:
             pass
     
@@ -1862,6 +1949,11 @@ class ChartView(QWidget):
         
         min_price = float(visible_df['Low'].min())
         max_price = float(visible_df['High'].max())
+        if self.is_spread and 'Series2' in visible_df.columns:
+            diff = visible_df['Close'] - visible_df['Series2']
+            diff_min = float(diff.min())
+            if diff_min < min_price:
+                min_price = diff_min
         price_range = max_price - min_price
         
         if price_range == 0:
@@ -2109,28 +2201,69 @@ class ChartView(QWidget):
 
 
 class CandlestickItem(pg.GraphicsObject):
+    """Candlestick item that only paints the bars visible in the current view.
+
+    Bars are drawn directly in paint(), clipped to the visible X range, with
+    cached pens/brushes. The cost per frame is proportional to the visible
+    bars instead of the whole history, keeping panning fast even with many
+    years of data.
+    """
     def __init__(self, data, bull_color='#55aaff', bear_color='#ef5350'):
         pg.GraphicsObject.__init__(self)
         self.data = data
         self.bull_color = bull_color
         self.bear_color = bear_color
-        self.picture = None
-        self.generatePicture()
+        self._pens = {}
+        self._brushes = {}
+        for color in (self.bull_color, self.bear_color):
+            self._pens[color] = pg.mkPen(color, width=1)
+            self._brushes[color] = pg.QtGui.QBrush(pg.QtGui.QColor(color), Qt.BrushStyle.SolidPattern)
+        self._bounds = self._compute_bounds()
     
-    def generatePicture(self):
-        self.picture = pg.QtGui.QPicture()
-        p = pg.QtGui.QPainter(self.picture)
-        
+    def _compute_bounds(self):
+        if not self.data:
+            return pg.QtCore.QRectF(0, 0, 0, 0)
+        lows = min(d[3] for d in self.data)
+        highs = max(d[2] for d in self.data)
+        if highs == lows:
+            highs = lows + 1.0
+        n = len(self.data)
+        return pg.QtCore.QRectF(-0.5, lows, n, highs - lows)
+    
+    def _visible_slice(self):
+        """Return (start, end) indexes of the bars inside the current view."""
+        n = len(self.data)
+        if n == 0:
+            return 0, 0
+        vb = self.getViewBox()
+        if vb is None:
+            return 0, n
+        try:
+            x0, x1 = vb.viewRange()[0]
+        except Exception:
+            return 0, n
+        i0 = max(0, int(x0) - 3)
+        i1 = min(n, int(x1) + 4)
+        if i1 < i0:
+            i1 = i0
+        return i0, i1
+    
+    def paint(self, p, *args):
+        i0, i1 = self._visible_slice()
+        if i1 <= i0:
+            return
         body_width = 0.7
+        half = body_width / 2.0
+        pens = self._pens
+        brushes = self._brushes
         
-        for i, (t, open_val, high, low, close) in enumerate(self.data):
+        for t, open_val, high, low, close in self.data[i0:i1]:
             if close >= open_val:
-                color = self.bull_color
+                pen = pens[self.bull_color]
+                brush = brushes[self.bull_color]
             else:
-                color = self.bear_color
-            
-            pen = pg.mkPen(color, width=1)
-            brush = pg.QtGui.QBrush(pg.QtGui.QColor(color), Qt.BrushStyle.SolidPattern)
+                pen = pens[self.bear_color]
+                brush = brushes[self.bear_color]
             
             p.setPen(pen)
             p.setBrush(brush)
@@ -2139,56 +2272,81 @@ class CandlestickItem(pg.GraphicsObject):
             
             body_height = abs(close - open_val) if close != open_val else 0.001
             body_top = min(open_val, close)
-            p.drawRect(pg.QtCore.QRectF(t - body_width/2, body_top, body_width, body_height))
-        
-        p.end()
-    
-    def paint(self, p, *args):
-        p.drawPicture(0, 0, self.picture)
+            p.drawRect(pg.QtCore.QRectF(t - half, body_top, body_width, body_height))
     
     def boundingRect(self):
-        return pg.QtCore.QRectF(self.picture.boundingRect())
+        return pg.QtCore.QRectF(self._bounds)
 
 
 class VolumeItem(pg.GraphicsObject):
+    """Volume bars item that only paints the bars visible in the current view.
+
+    Scale and Y offset are applied at paint time instead of re-recording the
+    whole picture, so setScale()/setYOffset() are O(1) and panning stays fast
+    even with many years of data.
+    """
     def __init__(self, data):
         pg.GraphicsObject.__init__(self)
         self.data = data
         self.scale = 1.0
         self.y_offset = 0
-        self.picture = None
-        self.generatePicture()
+        self._max_vol = max((d[1] for d in data), default=0.0)
+        self._pen_brush_cache = {}
     
     def setScale(self, scale):
+        self.prepareGeometryChange()
         self.scale = scale
-        self.generatePicture()
         self.update()
     
     def setYOffset(self, offset):
+        self.prepareGeometryChange()
         self.y_offset = offset
-        self.generatePicture()
         self.update()
     
-    def generatePicture(self):
-        self.picture = pg.QtGui.QPicture()
-        p = pg.QtGui.QPainter(self.picture)
-        
-        bar_width = 0.7
-        
-        for i, (t, vol, color) in enumerate(self.data):
+    def _pen_brush(self, color):
+        pb = self._pen_brush_cache.get(color)
+        if pb is None:
             pen = pg.mkPen(color, width=1)
             brush = pg.QtGui.QBrush(pg.QtGui.QColor(color), Qt.BrushStyle.SolidPattern)
-            
-            p.setPen(pen)
-            p.setBrush(brush)
-            
-            bar_height = vol * self.scale
-            p.drawRect(pg.QtCore.QRectF(t - bar_width/2, self.y_offset, bar_width, bar_height))
-        
-        p.end()
+            pb = (pen, brush)
+            self._pen_brush_cache[color] = pb
+        return pb
+    
+    def _visible_slice(self):
+        """Return (start, end) indexes of the bars inside the current view."""
+        n = len(self.data)
+        if n == 0:
+            return 0, 0
+        vb = self.getViewBox()
+        if vb is None:
+            return 0, n
+        try:
+            x0, x1 = vb.viewRange()[0]
+        except Exception:
+            return 0, n
+        i0 = max(0, int(x0) - 3)
+        i1 = min(n, int(x1) + 4)
+        if i1 < i0:
+            i1 = i0
+        return i0, i1
     
     def paint(self, p, *args):
-        p.drawPicture(0, 0, self.picture)
+        i0, i1 = self._visible_slice()
+        if i1 <= i0:
+            return
+        bar_width = 0.7
+        half = bar_width / 2.0
+        
+        for t, vol, color in self.data[i0:i1]:
+            pen, brush = self._pen_brush(color)
+            p.setPen(pen)
+            p.setBrush(brush)
+            bar_height = vol * self.scale
+            p.drawRect(pg.QtCore.QRectF(t - half, self.y_offset, bar_width, bar_height))
     
     def boundingRect(self):
-        return pg.QtCore.QRectF(self.picture.boundingRect())
+        n = len(self.data)
+        top = self.y_offset + self._max_vol * self.scale
+        if top == self.y_offset:
+            top = self.y_offset + 1.0
+        return pg.QtCore.QRectF(-0.5, self.y_offset, n, top - self.y_offset)

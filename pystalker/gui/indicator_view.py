@@ -29,6 +29,9 @@ class IndicatorPanel(QWidget):
         pg.setConfigOption('foreground', 'w')
         
         self.plot_widget = pg.PlotWidget()
+        # PlotItem-level auto peak downsampling: applied to every curve added
+        # to this plot by PlotItem.addItem (per-curve calls get overridden).
+        self.plot_widget.plotItem.setDownsampling(auto=True, mode='peak')
         self.plot_widget.setBackground('#1e1e1e')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.showAxis('right')
