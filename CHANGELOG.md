@@ -1,5 +1,43 @@
 # CHANGELOG
 
+2026-10-09
+
+- Fixed `TypeError: Cannot compare tz-naive and tz-aware datetime-like objects` when clicking Automatic Channel on freshly downloaded charts:
+  - Root cause: yfinance returns timezone-aware timestamps (exchange timezone), so freshly downloaded data had tz-aware indexes while the whole app and database work with tz-naive datetimes; the analysis-window comparison crashed. After a restart the same symbol loaded from the database was tz-naive, which is why it only hit fresh downloads.
+  - `YahooFinanceProvider` and `CSVProvider` now normalize their data to tz-naive local time, so downloads match database-reloaded data everywhere.
+  - `_analysis_window` is additionally tz-safe (window limits are localized to the index timezone), so even a tz-aware chart can never crash the calculation.
+  - Verified: the exact crash reproduced and fixed (tz-aware chart computes the same channel as the naive one — BTC ascending anchored on the yearly low 57,747.77), mocked yfinance download returns naive bars, tz-aware CSV normalized, and SAN.MC / BBVA.MC / BTC-USD channels are unchanged.
+- **Automatic Channel now anchors on the year's real extremes** (user feedback: it was picking "random points in the last months"): the candidate priority is
+  1. the year-start pivot (covers the whole year),
+  2. **the window's yearly extremes** — the lowest low and the highest high of the last year, the later one first ("the last top point": a low -> ascending channel, a high -> descending channel),
+  3. every other confirmed swing, most recent first.
+  Each candidate is still break-validated before drawing (a close beyond either channel line in the current month invalidates it) and the first unbroken one is drawn; if none, nothing is drawn with a message.
+  - Results on the user's data: **BTC-USD ascending anchored exactly on the yearly low 2026-07-01 (57,747.77) -> support 2026-08-17 (62,687.10)** (the year-start descending channel from the Oct 2025 high is correctly detected as broken by the current rally); SAN.MC ascending from 2025-10-17 (7.90) and BBVA.MC from 2025-10-16 (14.63), both year-covering.
+  - Verified: synthetic tests (year-start channels, broken-start -> yearly-low extreme, all-broken -> None, wick-vs-close, rising year), real-data invariants (extreme anchors are exactly the window's min low / max high, unbroken, direction-consistent, extremal parallel lines), and the GUI regression (rendering, immutability, undo, menu, persistence).
+- **Automatic Channel covers the whole last year and self-invalidates when broken** (rules confirmed with the user):
+  - The primary candidate anchors at the **year-start pivot**: the confirmed swing point of the first quarter of the window furthest from the window's midrange (a high -> descending channel, a low -> ascending channel), so the channel spans the year.
+  - **Break validation before showing**: a candidate channel is invalid if any bar after the analysis window (the current month) **closes beyond either channel line** — wicks do not count.
+  - **Walk-back recalculation**: if the year-start channel is broken by the current price, channels are rebuilt from each remaining pivot, most recent first, and the first unbroken one is drawn. If every candidate is broken, nothing is drawn and a message explains it.
+  - Base-line direction is enforced: ascending channels have rising supports, descending channels have falling resistances.
+  - Results on the user's data: SAN.MC ascending from 2025-10-17 (7.90) and BBVA.MC ascending from 2025-10-16 (14.63) — both year-covering and unbroken; BTC-USD's year-start descending channel (from the Oct 2025 high at 126k) is correctly detected as broken by the current rally, so the walk-back draws the most recent unbroken channel (2026-08-03, 62,226 -> 2026-08-14, 62,488).
+  - Verified: synthetic year-start ascending/descending series (exact anchors, score 0), broken-start walk-back, all-broken -> None, wick-vs-close validation, direction consistency; real-data invariants (unbroken, pivot anchors, extremal parallel, cleanest support); full GUI regression (creation, rendering, immutability, undo, menu, persistence).
+- **Fixed charts opening "clean/empty" with the Automatic Channel (or anything else) invisible**: a pre-existing timing issue can push the view's right edge far beyond the data (saved state found on BTC-USD: X range [4037, 11342] with 4,405 bars) — the chart opens zoomed out ~2.5x past the data, showing a thin candle band and a mostly empty "clean" graph, and everything else (channel, drawings) looks absent even though it is drawn and saved.
+  - `ChartView._repair_corrupted_x_range()` runs on every range change: since the app itself never scrolls past `len(df)+5`, any X range beyond `len(df)*1.5` is corruption and is instantly restored to the default view — fixing both the live occurrence during session restore and any in-session occurrence.
+  - `save_session` no longer persists corrupted view ranges, and the view-state restore guard now also rejects ranges extending beyond the data (defense in depth).
+  - Verified with the user's actual database copy: session restore now yields a normal ~388-bar view (was 7,305 wide), the automatic channel renders visibly after the click (1,447 px), and legitimate extreme views (full history, scrolling past the right edge) are never "repaired".
+  - Regression suite: crosshair, pan performance (~7 ms/frame), automatic channel, spreads, and console cleanliness (including the repair path) all pass.
+- "Automatic Channel" click with no chart open now shows a message instead of doing nothing silently.
+- Added **Automatic Channel** (Draw menu): a channel that is calculated automatically and placed on the chart as a normal drawing.
+  - Analyses the last 12 complete months of the displayed data, excluding the current (partial) month; window is relative to the visible period (works with the limit-date backtesting view).
+  - Direction: the last confirmed major swing point decides — if it is a high a descending channel is drawn, if it is a low an ascending channel (swings = High/Low extreme of the surrounding ±10 bars; a same-bar top+bottom tie is resolved by where the bar closed).
+  - Ascending: base line from the major low to the cleanest supporting low in the next candles (fewest violations where another low touches/pierces the line; longest span wins ties; supports at least ±10 bars away preferred). The parallel top line goes through the highest high of the window, so no other maximum touches it (one or two touch points = line tests).
+  - Descending: mirror image (base on highs, bottom parallel through the lowest low).
+  - Best effort: if no perfectly clean support exists the candidate with the fewest violations is used; only fails if two anchor points cannot be placed at all (message shown).
+  - The result is a standard `asc_channel`/`desc_channel` drawing: white like manual drawings, editable/copyable/undoable, persisted in the database, and **never recalculated or moved again** — creating a new one simply adds another drawing.
+  - New `pystalker/core/auto_channel.py` (`find_automatic_channel`) and `ChartView.add_automatic_channel()`; new "Automatic Channel" entry in the Draw menu.
+  - Verified: synthetic ascending/descending series (exact anchors, score 0, top/bottom touch points), direction from the last pivot, current-month spike exclusion, close-based tie-break, fallbacks; real-data invariants on SAN.MC / BBVA.MC / BTC-USD (direction, anchor = last pivot, brute-force optimality of the chosen support, extremal parallel line); GUI tests (rendering, redraw immutability, persistence round trip, undo, multiple channels, spreads) and full menu integration with database persistence.
+  - Channels found in the user's data: SAN.MC ascending 2026-08-19 (12.15) -> 2026-09-30 (12.33) clean (score 0); BBVA.MC ascending 2026-09-09 (24.59) -> 2026-09-24 (24.66); BTC-USD ascending 2026-09-15 (74944) -> 2026-09-29 (82739).
+
 2026-10-08
 
 - Crosshair now replaces the mouse cursor when the toolbar Crosshair icon is activated, and the normal mouse cursor is restored when deactivated.

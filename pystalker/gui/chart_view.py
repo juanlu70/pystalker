@@ -1797,6 +1797,7 @@ class ChartView(QWidget):
     def update_date_ticks(self):
         if self.df is None or len(self.df) == 0:
             return
+        self._repair_corrupted_x_range()
         
         view_range = self.view_box.viewRange()
         left = max(0, int(view_range[0][0]))
@@ -1929,6 +1930,22 @@ class ChartView(QWidget):
         self.volume_item.setScale(volume_scale)
         self.volume_item.setYOffset(y_min - price_range * 0.05)
     
+    def _repair_corrupted_x_range(self):
+        """Repair corrupted view X ranges.
+
+        A pre-existing timing issue can push the view's right edge far beyond
+        the data (e.g. x_max ~ 2.5x the number of bars), leaving an almost
+        empty chart. The application itself never scrolls past len(df)+5, so
+        any range extending beyond len(df)*1.5 is corruption: restore the
+        default view. Runs on every range change, so the repair is immediate.
+        """
+        try:
+            xr = self.view_box.viewRange()[0]
+            if xr[1] > len(self.df) * 1.5:
+                self._apply_default_view()
+        except Exception:
+            pass
+    
     def set_initial_y_range(self):
         if self.df is None or len(self.df) == 0:
             return
@@ -2039,9 +2056,13 @@ class ChartView(QWidget):
             
             try:
                 x_min, x_max = x_range
+                # sanity: reject corrupted ranges that extend far beyond the
+                # data (a known timing issue can push the right edge out,
+                # making the chart open mostly empty); fall back to default view
                 if (x_min is not None and x_max is not None and
                     isinstance(x_min, (int, float)) and isinstance(x_max, (int, float)) and
-                    x_max > x_min and (x_max - x_min) < data_len * 2):
+                    x_max > x_min and (x_max - x_min) < data_len * 2 and
+                    -data_len * 0.5 < x_min and x_max < data_len * 1.5):
                     self.plot_widget.setXRange(x_min, x_max)
                 else:
                     self._apply_default_view()
@@ -2081,6 +2102,49 @@ class ChartView(QWidget):
                 entry['middle_color'] = drawing['middle_color']
             result.append(entry)
         return result
+    
+    def add_automatic_channel(self):
+        """Create an automatically calculated channel (Draw > Automatic Channel).
+
+        Analyzes the last 12 complete months of the displayed data (current
+        month excluded). The primary candidate anchors at the year-start
+        pivot (a high -> descending, a low -> ascending) so the channel
+        covers the whole year; if the current price has broken a candidate
+        channel (a close beyond either line), the next most recent pivot is
+        tried until an unbroken one is found. The result is a normal channel
+        drawing: it is never recalculated or moved again and behaves exactly
+        like a manually drawn channel.
+        """
+        if self.df is None or self.df.empty:
+            return None
+        from ..core.auto_channel import find_automatic_channel
+        result = find_automatic_channel(self.df)
+        if result is None:
+            return None
+        self.push_undo()
+        color = self._get_next_drawing_color()
+        points = [(int(result['points'][0][0]), float(result['points'][0][1])),
+                  (int(result['points'][1][0]), float(result['points'][1][1])),
+                  (0, float(result['points'][2][1]))]
+        x_min = -10
+        x_max = len(self.df) + 10
+        item = ChannelItem(points, color, 1, x_min, x_max, middle_color='#808080')
+        item.show_endpoints = self._draw_mode
+        self.plot_widget.addItem(item)
+        drawing = {
+            'type': result['type'],
+            'item': item,
+            'points': points,
+            'color': color,
+            'snap': '',
+            'params': {},
+            'width': 1,
+            'middle_color': '#808080',
+            'auto': True
+        }
+        self.drawings.append(drawing)
+        self.plot_widget.update()
+        return drawing
     
     def push_undo(self):
         snapshot = self._snapshot_drawings()

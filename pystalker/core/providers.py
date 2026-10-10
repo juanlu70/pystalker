@@ -54,6 +54,16 @@ class YahooFinanceProvider(DataProvider):
         else:
             df = ticker.history(period='max', interval=yf_interval)
         
+        # yfinance returns timezone-aware timestamps (exchange timezone), while
+        # the app and its database work with tz-naive datetimes everywhere.
+        # Normalize to naive local time so freshly downloaded data matches
+        # data reloaded from the database and every date comparison works.
+        if getattr(df.index, 'tz', None) is not None:
+            try:
+                df.index = df.index.tz_localize(None)
+            except Exception:
+                df.index = df.index.tz_convert(None)
+        
         bar_data = BarData(symbol)
         
         for index, row in df.iterrows():
@@ -108,6 +118,14 @@ class CSVProvider(DataProvider):
         df = df.dropna(subset=['Date'])
         df.set_index('Date', inplace=True)
         df.sort_index(inplace=True)
+        
+        # CSV files may carry timezone-aware timestamps; normalize to tz-naive
+        # like every other data source in the app
+        if getattr(df.index, 'tz', None) is not None:
+            try:
+                df.index = df.index.tz_localize(None)
+            except Exception:
+                df.index = df.index.tz_convert(None)
         
         bar_data = BarData(symbol)
         
