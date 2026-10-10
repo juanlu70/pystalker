@@ -330,6 +330,12 @@ class PyStalkerWindow(QMainWindow):
         
         draw_menu.addSeparator()
         
+        auto_channel_action = QAction("Automatic Channel", self)
+        auto_channel_action.triggered.connect(self.on_automatic_channel)
+        draw_menu.addAction(auto_channel_action)
+        
+        draw_menu.addSeparator()
+        
         clear_trendlines_action = QAction("Clear Drawings", self)
         clear_trendlines_action.triggered.connect(self.on_clear_drawings)
         draw_menu.addAction(clear_trendlines_action)
@@ -1507,12 +1513,17 @@ class PyStalkerWindow(QMainWindow):
             if tab:
                 view_state = tab.get_view_state()
                 indicators = tab.get_indicators()
-                self.database.save_chart_view_state(symbol, {
-                    'x_min': view_state.get('chart', {}).get('x_range', (0, 0))[0],
-                    'x_max': view_state.get('chart', {}).get('x_range', (0, 0))[1],
-                    'y_min': view_state.get('chart', {}).get('y_range', (0, 0))[0],
-                    'y_max': view_state.get('chart', {}).get('y_range', (0, 0))[1]
-                })
+                xr = view_state.get('chart', {}).get('x_range', (0, 0))
+                df_len = len(tab.chart_view.df) if tab.chart_view.df is not None else 0
+                # never persist corrupted view ranges (right edge far beyond the
+                # data); restoring already rejects them, keep them out of the DB
+                if not (df_len and isinstance(xr[1], (int, float)) and xr[1] > df_len * 1.5):
+                    self.database.save_chart_view_state(symbol, {
+                        'x_min': xr[0],
+                        'x_max': xr[1],
+                        'y_min': view_state.get('chart', {}).get('y_range', (0, 0))[0],
+                        'y_max': view_state.get('chart', {}).get('y_range', (0, 0))[1]
+                    })
                 self.database.save_chart_indicators(symbol, indicators)
                 self.database.save_drawings(symbol, tab.chart_view.get_drawings())
                 
@@ -1578,6 +1589,21 @@ class PyStalkerWindow(QMainWindow):
                 self.draw_mode_action.setChecked(True)
             tab.chart_view.start_desc_channel_drawing()
             tab.chart_view.setFocus()
+    
+    def on_automatic_channel(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab:
+            QMessageBox.information(self, "Automatic Channel",
+                                    "Open a chart first to create an automatic channel.")
+            return
+        drawing = tab.chart_view.add_automatic_channel()
+        if drawing is not None:
+            kind = "ascending" if drawing['type'] == 'asc_channel' else "descending"
+            self.statusBar().showMessage(f"Automatic channel created ({kind})", 3000)
+        else:
+            QMessageBox.information(self, "Automatic Channel",
+                                    "No automatic channel was drawn: not enough data, or every "
+                                    "candidate channel in the last year is broken by the current price.")
     
     def on_clear_drawings(self):
         tab = self.chart_tabs.get_current_tab()
