@@ -1599,7 +1599,8 @@ class PyStalkerWindow(QMainWindow):
         drawing = tab.chart_view.add_automatic_channel()
         if drawing is not None:
             kind = "ascending" if drawing['type'] == 'asc_channel' else "descending"
-            self.statusBar().showMessage(f"Automatic channel created ({kind})", 3000)
+            suffix = ", including current month" if drawing.get('extended') else ""
+            self.statusBar().showMessage(f"Automatic channel created ({kind}{suffix})", 4000)
         else:
             QMessageBox.information(self, "Automatic Channel",
                                     "No automatic channel was drawn: not enough data, or every "

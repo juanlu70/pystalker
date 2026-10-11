@@ -26,9 +26,14 @@ For each candidate:
     (the current month) CLOSES beyond either channel line ("the price broke
     the channel").
 
-The first candidate that survives validation is drawn. If none survives,
-None is returned (the caller shows a message and draws nothing). The result
-is never recalculated: once drawn it is a normal, static drawing.
+The first candidate that survives validation is drawn. If EVERY candidate of
+the standard window is broken (e.g. a strongly trending market whose recent
+closes went beyond every channel), the calculation is retried once with the
+window INCLUDING the current month - the channel then reflects the newest
+prices, while the current month's closes still act as the break validation.
+If nothing survives, None is returned (the caller shows a message and draws
+nothing). The result is never recalculated: once drawn it is a normal,
+static drawing.
 """
 import numpy as np
 import pandas as pd
@@ -40,26 +45,36 @@ def _month_shift(year: int, month: int, delta: int):
     return total // 12, total % 12 + 1
 
 
-def _analysis_window(df: pd.DataFrame) -> np.ndarray:
+def _analysis_window(df: pd.DataFrame, include_current: bool = False) -> np.ndarray:
     """Global bar positions of the analysis window.
 
     The window covers the last 12 complete months, excluding the current
-    (possibly partial) month. If the data does not reach back a year, the
-    window starts at the first available bar. If nearly all data falls inside
-    the current month, all bars are used (best effort).
+    (possibly partial) month. With include_current=True the window runs from
+    the start of the month 11 months before the current one up to the last
+    bar, so it covers 12 months plus the current (partial) month - used as a
+    retry when every standard-window candidate is broken. If the data does
+    not reach back that far, the window starts at the first available bar.
     """
     idx = df.index
     last = idx[-1]
+    tz = getattr(idx, 'tz', None)
+    if include_current:
+        start_year, start_month = _month_shift(last.year, last.month, -11)
+        start_limit = pd.Timestamp(year=start_year, month=start_month, day=1)
+        # tz-aware indexes (some data sources) cannot be compared with naive
+        # timestamps: localize the window limits to the index timezone
+        if tz is not None:
+            start_limit = start_limit.tz_localize(tz)
+        start_pos = idx.searchsorted(start_limit, side='left')
+        return np.arange(start_pos, len(idx))
+
     end_year, end_month = _month_shift(last.year, last.month, -1)
     end_limit = pd.Timestamp(year=end_year, month=end_month, day=1) + pd.offsets.MonthEnd(0)
     start_year, start_month = _month_shift(end_year, end_month, -11)
     start_limit = pd.Timestamp(year=start_year, month=start_month, day=1)
-
-    # tz-aware indexes (some data sources) cannot be compared with naive
-    # timestamps: localize the window limits to the index timezone
-    if getattr(idx, 'tz', None) is not None:
-        end_limit = end_limit.tz_localize(idx.tz)
-        start_limit = start_limit.tz_localize(idx.tz)
+    if tz is not None:
+        end_limit = end_limit.tz_localize(tz)
+        start_limit = start_limit.tz_localize(tz)
 
     end_pos = idx.searchsorted(end_limit, side='right')
     if end_pos < 2:
@@ -184,13 +199,19 @@ def _build_candidate(df, window, kind, i0, pivot_bars):
     return points, score
 
 
-def _is_broken(df, window, kind, points, eps_scale=1e-9):
-    """True if any bar AFTER the analysis window closes beyond either line."""
+def _is_broken(df, window, kind, points, post_start=None, eps_scale=1e-9):
+    """True if any bar AFTER the analysis range closes beyond either line.
+
+    The checked bars start at post_start (default: the first bar after the
+    window) and run to the last bar of the data.
+    """
     i0, ic = points[0][0], points[1][0]
     y0, yc = points[0][1], points[1][1]
     height = points[2][1]
     slope = (yc - y0) / (ic - i0)
-    post = np.arange(window[-1] + 1, len(df))
+    if post_start is None:
+        post_start = window[-1] + 1
+    post = np.arange(post_start, len(df))
     if len(post) == 0:
         return False
     if 'Close' not in df.columns:
@@ -207,24 +228,13 @@ def _is_broken(df, window, kind, points, eps_scale=1e-9):
     return False
 
 
-def find_automatic_channel(df: pd.DataFrame, pivot_bars: int = 10) -> Optional[Dict]:
-    """Compute the Automatic channel for the displayed data.
+def _find_with_window(df, window, pivot_bars, post_start=None):
+    """Build and validate candidates over one analysis window.
 
-    Returns a dict with:
-      type        'asc_channel' or 'desc_channel'
-      points      [(bar, y), (bar, y), (0, height)] in global bar coordinates
-      window      (start_date, end_date) analysed
-      score       cleanliness of the base line (0 = no violations)
-      candidate   'start' (year-start pivot), 'extreme' (yearly low/high
-                  anchor) or 'pivot' (other swing point)
-    or None if no unbroken channel can be built.
+    Returns the channel dict (see find_automatic_channel) or None when every
+    candidate is broken or unbuildable. post_start overrides the first bar
+    used for the break validation (default: the first bar after the window).
     """
-    if df is None or len(df) < 2 or 'High' not in df.columns or 'Low' not in df.columns:
-        return None
-
-    window = _analysis_window(df)
-    if len(window) < 2:
-        window = np.arange(len(df))
     g_high = df['High'].values[window].astype(float)
     g_low = df['Low'].values[window].astype(float)
     n = len(window)
@@ -273,7 +283,7 @@ def find_automatic_channel(df: pd.DataFrame, pivot_bars: int = 10) -> Optional[D
         if built is None:
             continue
         points, score = built
-        if _is_broken(df, window, kind, points):
+        if _is_broken(df, window, kind, points, post_start=post_start):
             continue
         if start_pivot and (i0, kind) == start_pivot:
             candidate_kind = 'start'
@@ -289,4 +299,48 @@ def find_automatic_channel(df: pd.DataFrame, pivot_bars: int = 10) -> Optional[D
             'candidate': candidate_kind,
             'pivot_bars': pivot_bars,
         }
+    return None
+
+
+def find_automatic_channel(df: pd.DataFrame, pivot_bars: int = 10) -> Optional[Dict]:
+    """Compute the Automatic channel for the displayed data.
+
+    First pass: the window is the last 12 complete months, excluding the
+    current (partial) month. If every candidate in that window is broken by
+    the current price (a close beyond either channel line), the calculation
+    is retried once with the window INCLUDING the current month - so the
+    channel reflects the newest prices - while the current month's closes
+    still act as the break validation. If nothing survives, None is returned.
+
+    Returns a dict with:
+      type        'asc_channel' or 'desc_channel'
+      points      [(bar, y), (bar, y), (0, height)] in global bar coordinates
+      window      (start_date, end_date) analysed
+      score       cleanliness of the base line (0 = no violations)
+      candidate   'start' (year-start pivot), 'extreme' (yearly low/high
+                  anchor) or 'pivot' (other swing point)
+      extended    True when the retry including the current month was used
+    """
+    if df is None or len(df) < 2 or 'High' not in df.columns or 'Low' not in df.columns:
+        return None
+
+    window = _analysis_window(df)
+    if len(window) < 2:
+        window = np.arange(len(df))
+    result = _find_with_window(df, window, pivot_bars)
+    if result is not None:
+        result['extended'] = False
+        return result
+
+    # every standard-window candidate is broken: retry once with the window
+    # including the current month; the current month's closes are still the
+    # break validation (they start right after the standard window ends)
+    extended = _analysis_window(df, include_current=True)
+    if len(extended) < 2:
+        extended = np.arange(len(df))
+    post_start = window[-1] + 1 if window[-1] + 1 <= len(df) - 1 else None
+    result = _find_with_window(df, extended, pivot_bars, post_start=post_start)
+    if result is not None:
+        result['extended'] = True
+        return result
     return None
