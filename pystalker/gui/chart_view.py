@@ -2140,7 +2140,8 @@ class ChartView(QWidget):
             'params': {},
             'width': 1,
             'middle_color': '#808080',
-            'auto': True
+            'auto': True,
+            'extended': bool(result.get('extended', False))
         }
         self.drawings.append(drawing)
         self.plot_widget.update()

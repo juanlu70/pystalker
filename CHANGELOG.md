@@ -1,5 +1,26 @@
 # CHANGELOG
 
+2026-10-11
+
+- Fixed "No automatic channel was drawn" on strongly trending assets (e.g. AMD): AMD's October closes went above the year-channel tops and the pullback fell below the recent channel's base, breaking every candidate in the standard window - the message was correct behavior but left nothing drawable (user confirmed the fix).
+  - When EVERY candidate of the standard window (excluding the current month) is broken, the calculation is retried once with the window INCLUDING the current month, so the channel reflects the newest prices; the current month's closes still act as the break validation (a channel must contain them).
+  - The status bar reports when the retry was used ("Automatic channel created (ascending, including current month)"), and the result carries an `extended` flag.
+  - AMD now draws: ascending from the 2025-11-25 low (194.28), support 2026-02-17 (194.83), upper line 658.55 - all October closes (608-649) inside. BTC-USD / SAN.MC / BBVA.MC results are unchanged; genuinely broken markets (wild synthetic closes) still yield the message and nothing.
+  - Also fixed a tz regression introduced in the refactor (end_limit was compared before timezone localization for tz-aware indexes).
+
+- `channel_scanner.py` now prints the report's local date & time in the first line ("Report generated: 2026-10-11 10:44:49 CEST"), so it is always clear when each report was made.
+
+2026-10-10
+
+- Added **`channel_scanner.py`** - standalone program that scans all assets (not spreads) in the pystalker database, discards those without channel drawings, and reports assets whose last close is inside a channel and within (default) 10% of a channel line: ticker, ascending/descending, which line the price is near (lower/upper) and the proximity percentage (distance relative to the line's value). Prices beyond a channel line are reported as broken-channel notifications (rules confirmed with the user).
+  - Usage: `python channel_scanner.py [--max-proximity 10] [--symbol BTC-USD] [--db PATH]`; copies (BTC-USD-1 etc.) use their source asset's bars.
+  - Verified with synthetic databases (near lower/upper, mid-channel filtered, broken beyond upper/lower, copy resolution, degenerate channels, no-channel assets, filters) and against the real database (25 assets near lines, BTC-USD 7.35% from its ascending channel's upper line).
+
+- **Fixed duplicated daily bars in the database** (found while building the scanner): a timezone bug in the download path (yfinance tz-aware timestamps stored as true-UTC epochs, differing from the historical local-midnight epochs) left 29,580 duplicate rows (2 bars per day on BTC-USD, ETH-USD, SOL-USD, USDT-USD, QQQ, ^VIX, SPCX) and 60,955 non-midnight timestamps on US/futures symbols that would double on the next update.
+  - Added `fix_duplicate_bars.py` (standalone): backs up the database, keeps one row per calendar day (preferring the local-midnight row), normalizes remaining timestamps to local midnight, deletes duplicates; supports `--dry-run`.
+  - The tz normalization in the providers (previous entry) prevents recurrence: downloads now produce the same canonical timestamps the database already uses, so updates REPLACE instead of inserting duplicates.
+  - The user's database was cleaned with consent; data integrity verified afterwards (all OHLC values intact by local date, one row per day everywhere, all timestamps at local midnight, and the BTC-USD channel drawing re-aligned - bar 4305 is 2026-07-01 again).
+
 2026-10-09
 
 - Fixed `TypeError: Cannot compare tz-naive and tz-aware datetime-like objects` when clicking Automatic Channel on freshly downloaded charts:

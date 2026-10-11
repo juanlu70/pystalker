@@ -1,0 +1,35 @@
+Channel scanner - assets with price within 10% of a channel line
+Scanned 68 asset(s) with channel drawings
+
+ASSET                 CHANNEL     NEAR LINE  PROXIMITY    LAST CLOSE    LINE VALUE	Entrada Virtual	Fecha EV
+^TNX (10Y US BOND)    Ascending   Upper          0.92%          5.32          5.37
+SPY                   Ascending   Lower          1.72%        778.57        765.42
+SI=F (SILVER)         Ascending   Lower          1.84%         59.03         57.97	60.80		2026-10-10
+ES=F (EMINI S&P 500)  Ascending   Lower          2.00%       7822.00       7668.70
+DRAM                  Ascending   Lower          2.05%         57.19         56.04
+AAPL                  Ascending   Upper          2.90%        336.64        346.68
+PAXG-USD              Ascending   Lower          3.76%       4183.10       4031.60
+GC=F (GOLD)           Ascending   Lower          4.15%       4146.50       3981.40
+QQQ                   Ascending   Lower          4.30%        751.27        720.32
+META                  Descending  Upper          4.53%        718.67        752.77
+DIS                   Descending  Upper          4.94%        108.05        113.66
+NQ=F (NASDAQ 100)     Ascending   Lower          5.05%      31108.75      29614.08
+005380.KS (HYUNDAI)   Descending  Upper          5.39%     324500.00     342987.39
+TSLA                  Descending  Upper          5.54%        382.70        405.16
+BRK-B                 Ascending   Upper          5.66%        515.62        546.54
+SPCX                  Ascending   Lower          5.84%        162.57        153.60
+CRWD                  Ascending   Upper          6.11%        275.04        292.93
+PL=F (PLATINUM)       Ascending   Lower          6.17%       1647.90       1552.20
+UVXY                  Descending  Lower          6.49%         16.32         15.33
+AVGO                  Ascending   Lower          6.60%        361.54        339.15
+ETH-USD               Descending  Upper          7.09%       2507.98       2699.35
+BTC-USD               Ascending   Upper          7.17%      82952.51      89362.74
+MSFT                  Ascending   Upper          7.18%        535.07        576.44
+SOL-USD               Descending  Upper          8.29%        110.51        120.50
+HG=F (COPPER)         Ascending   Upper          8.71%          6.63          7.26
+RKLB                  Ascending   Lower          8.83%         68.21         62.68
+ANET                  Ascending   Upper          8.90%        216.74        237.92
+IWM                   Ascending   Lower          9.69%        278.94        254.30
+APLD                  Ascending   Lower          9.88%         23.68         21.55
+
+29 asset(s) near a channel line
