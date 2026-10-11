@@ -2,6 +2,7 @@
 
 2026-10-11
 
+- README: new sections for the automatic channel detection (honest "not perfect but near perfect" note, rules summary, demonstration media) and the `channel_scanner.py` tool (assets near channel lines). Features list updated with channels and the new tool. The user-provided screenshot and demonstration video were renamed to `automatic_channel.png` / `automatic_channel.webm` and embedded in the README.
 - Fixed "No automatic channel was drawn" on strongly trending assets (e.g. AMD): AMD's October closes went above the year-channel tops and the pullback fell below the recent channel's base, breaking every candidate in the standard window - the message was correct behavior but left nothing drawable (user confirmed the fix).
   - When EVERY candidate of the standard window (excluding the current month) is broken, the calculation is retried once with the window INCLUDING the current month, so the channel reflects the newest prices; the current month's closes still act as the break validation (a channel must contain them).
   - The status bar reports when the retry was used ("Automatic channel created (ascending, including current month)"), and the result carries an `extended` flag.
