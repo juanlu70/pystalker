@@ -27,7 +27,7 @@ I only have a very basic knowledge of C++ and LibQT, I am mainly a python develo
 
 When I wrote this README first time, the project is still in a very early stage, has lots of bugs, many functions are not working and there is a long trip to get the program finished and in the stage of what I would consider finished, but I want to share the code with the communinty and see if there are people interested on the project and able to contribute to it, in the current state it is really usable and can deliver results.
 
-Now the project is a MVP, can get daily data and I added some new improvements like spreads and ML indicators for prediction.
+Now the project is a MVP, can get daily data and I added some new improvements like spreads, ML indicators for prediction and the automatic channel detection.
 
 
 # Features
@@ -35,8 +35,57 @@ Now the project is a MVP, can get daily data and I added some new improvements l
 - Downaloads data from Yahoo Finance (only daily data), future support for CSV data and possibly other data source endpoints, also in real time!
 - Overlay technical indicators: Simple Moving Average, Exponential Moving Average, Bollinguer Bands, Parabollic SAR.
 - Stacked technical indicators: MACD, RSI, CCI, ADX, ATR, Momentum, ROC, Stochastic, Stochastic RSI, WILLR, OBV, MFI.
-- Drawings: Trendlines, Horizontal lines, Vertical lines, future support for fibonacci drawings.
+- Drawings: Trendlines, Horizontal lines, Vertical lines, Ascending and Descending Channels (drawn manually or detected automatically), future support for fibonacci drawings.
 - Types of graphs: Lines, candles, Heikin Ashi, future support for open candles.
+- Tools: channel_scanner.py, to discover assets whose price is near a drawn channel line.
+
+
+# Automatic channel detection
+
+The automatic channel is one of the improvements I had in mind since my Qtstalker times: with one click (Draw -> Automatic Channel) the program analyses the last year of the asset and draws an ascending or descending channel over the trend, with a quality close to what you would get by drawing it by hand.
+
+![Automatic channel](automatic_channel.png)
+
+How it works:
+
+- It analyses the last 12 complete months of data, excluding the current (partial) month.
+- If the year started from a major high it draws a descending channel, if it started from a major low it draws an ascending channel; when the year-start structure is not valid it anchors on the year's lowest low or highest high, and then on the rest of the confirmed swing points.
+- The channel is only drawn if the current price respects it: if any recent close has gone beyond one of the channel lines the candidate is invalidated and the program recalculates with the next candidate before drawing anything. For very strong trends where every candidate is broken it retries once including the current month, so the channel contains the newest prices.
+- Once drawn, the result is a normal channel drawing: it is never recalculated or moved again, and you can edit it, copy it, recolor it or delete it exactly like any manually drawn channel.
+
+To be honest, the detection is not perfect, but it is near perfect: markets are messy and occasionally it can miss a structure that your trader eye will see better. For those cases you can always draw the channel manually, the automatic channel is only one more tool in the toolbox.
+
+You can watch a demonstration video here: [automatic_channel.webm](automatic_channel.webm)
+
+<video src="automatic_channel.webm" controls muted width="752"></video>
+
+
+# Discovering assets near the channel limits
+
+The channels become much more useful when you can watch them all at once. `channel_scanner.py` is an independent tool that scans every asset in the pystalker database, discards the ones without drawn channels, and reports which assets have their price near a channel line - by default inside the channel and within 10% of the lower or upper line - showing the ticker, whether the channel is ascending or descending, which line the price is near, and the proximity percentage. It also notifies you when the current price has broken a channel, so you know that channel is invalidated and you can draw a new one.
+
+```
+python channel_scanner.py
+python channel_scanner.py --max-proximity 5
+python channel_scanner.py --symbol BTC-USD
+```
+
+Example output (report date and time are always printed first, trimmed here):
+
+```
+Report generated: 2026-10-11 20:35:12 CEST
+Channel scanner - assets with price within 10% of a channel line
+Scanned 72 asset(s) with channel drawings
+
+ASSET                CHANNEL     NEAR LINE  PROXIMITY    LAST CLOSE    LINE VALUE
+^TNX (10Y US BOND)   Ascending   Upper          0.92%          5.32          5.37
+SPY                  Ascending   Lower          1.72%        778.57        765.42
+AAPL                 Ascending   Upper          2.90%        336.64        346.68
+QQQ                  Ascending   Lower          4.30%        751.27        720.32
+BTC-USD              Ascending   Upper          7.17%      82952.51      89362.74
+AMD                  Ascending   Upper          7.66%        608.10        658.55
+...
+```
 
 
 # Running the program
