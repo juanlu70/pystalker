@@ -55,9 +55,14 @@ How it works:
 
 To be honest, the detection is not perfect, but it is near perfect: markets are messy and occasionally it can miss a structure that your trader eye will see better. For those cases you can always draw the channel manually, the automatic channel is only one more tool in the toolbox.
 
-You can watch a demonstration video here: [automatic_channel.webm](automatic_channel.webm)
+![Automatic channel demo](automatic_channel.gif)
 
-<video src="automatic_channel.webm" controls muted width="752"></video>
+Full quality video: [automatic_channel.mp4](automatic_channel.mp4)
+
+<!-- Note: GitHub does not render <video> players for files committed in the
+     repository. If you prefer a real video player instead of the animated GIF:
+     open this file in the GitHub web editor and drag & drop automatic_channel.mp4
+     at this spot - GitHub will upload it and insert a working inline player. -->
 
 
 # Discovering assets near the channel limits
