@@ -334,6 +334,10 @@ class PyStalkerWindow(QMainWindow):
         auto_channel_action.triggered.connect(self.on_automatic_channel)
         draw_menu.addAction(auto_channel_action)
         
+        auto_sr_action = QAction("Automatic S-R", self)
+        auto_sr_action.triggered.connect(self.on_automatic_sr)
+        draw_menu.addAction(auto_sr_action)
+        
         draw_menu.addSeparator()
         
         clear_trendlines_action = QAction("Clear Drawings", self)
@@ -480,11 +484,11 @@ class PyStalkerWindow(QMainWindow):
         
         toolbar.addSeparator()
         
-        crosshair_action = QAction(load_icon('crosshair'), "Crosshair", toolbar)
-        crosshair_action.setCheckable(True)
-        crosshair_action.setChecked(True)
-        crosshair_action.triggered.connect(self.on_toggle_crosshair)
-        toolbar.addAction(crosshair_action)
+        self.crosshair_action = QAction(load_icon('crosshair'), "Crosshair", toolbar)
+        self.crosshair_action.setCheckable(True)
+        self.crosshair_action.setChecked(False)
+        self.crosshair_action.triggered.connect(self.on_toggle_crosshair)
+        toolbar.addAction(self.crosshair_action)
         
         toolbar.addSeparator()
         
@@ -1605,6 +1609,20 @@ class PyStalkerWindow(QMainWindow):
             QMessageBox.information(self, "Automatic Channel",
                                     "No automatic channel was drawn: not enough data, or every "
                                     "candidate channel in the last year is broken by the current price.")
+    
+    def on_automatic_sr(self):
+        tab = self.chart_tabs.get_current_tab()
+        if not tab:
+            QMessageBox.information(self, "Automatic S-R",
+                                    "Open a chart first to draw automatic support/resistance lines.")
+            return
+        drawings = tab.chart_view.add_automatic_sr()
+        if drawings:
+            self.statusBar().showMessage(f"Automatic S-R: {len(drawings)} levels drawn", 4000)
+        else:
+            QMessageBox.information(self, "Automatic S-R",
+                                    "No significant support/resistance levels were found: a level "
+                                    "needs at least 3 price bounces along the history.")
     
     def on_clear_drawings(self):
         tab = self.chart_tabs.get_current_tab()

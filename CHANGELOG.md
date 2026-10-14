@@ -1,5 +1,20 @@
 # CHANGELOG
 
+2026-10-14
+
+- **Fixed the blank chart regression** introduced with the crosshair price tag: the tag was parented to the right price axis, which is destroyed and recreated on every chart redraw - when the old axis was garbage collected the tag's underlying object died with it, so the next redraw crashed with `RuntimeError: wrapped C/C++ object of type TextItem has been deleted` right after clearing the plot, leaving an empty chart. Reproduced deterministically (second redraw with forced GC) and fixed by attaching the tag to the plot scene (which lives as long as the plot) and computing its position over the axis in scene coordinates on every update. Verified across 5 consecutive redraws with forced garbage collection: no crash, chart content intact, price tag still working; full cursor/tag regression suite passes.
+- **Crosshair now OFF by default**: every graph starts with the normal mouse cursor; the full-view crosshair appears only when the Crosshair toolbar button is activated (the button now starts unchecked). Toggling off while hovering restores the normal cursor immediately.
+- **Crosshair price tag on the right price axis (TradingView style)**: while the crosshair is active, the current crosshair price is shown in the right price ruler as a white price tag that follows the horizontal line (positioned on the axis, re-attached on every chart redraw, hidden with the crosshair).
+  - Verified: default cursor state, toggle on/off in both directions, tag text and exact axis position, mouse-following updates, pixel-rendered tag inside the axis strip, redraw survival, draw-mode unaffected, real-window toolbar behaviour; console stays clean.
+
+2026-10-12
+
+- Added **Automatic S-R** (Draw menu): automatic detection of long-term support and resistance levels, drawn as yellow horizontal lines (rules confirmed with the user).
+  - Analyses ALL the displayed history: confirmed swing highs/lows (pivots, ±10 bars) are touches; touches within 1% of each other cluster into one level (level price = average of its touches); levels with at least 3 bounces count, and up to the 8 strongest are drawn.
+  - Lines are normal horizontal-line drawings in yellow, labelled with price and strength at the left edge (e.g. "6543.65 (4x)"); the touch count persists with the drawing (`label_suffix` in params survives save/restore/copy) and the lines are never recalculated - like every automatic drawing.
+  - New `pystalker/core/support_resistance.py` (`find_support_resistance_levels`), `ChartView.add_automatic_sr()`, `HLineItem` label suffix support, and the "Automatic S-R" Draw menu entry.
+  - Verified: synthetic series with engineered levels (100 -> 4x support, 150 -> 3x resistance found exactly; a 2-touch level filtered; min_touches/max_levels parameters; short/empty data), real-data invariants on BTC-USD / SAN.MC / AMD (levels within the price range, touches >= 3, strength-sorted, e.g. SAN.MC 2.75 with 19 touches), and the full GUI path (yellow rendering pixel-verified, undo removes all, persistence round trip with labels, immutability across redraws, menu handler with database persistence, console clean).
+
 2026-10-11
 
 - README: new sections for the automatic channel detection (honest "not perfect but near perfect" note, rules summary, demonstration media) and the `channel_scanner.py` tool (assets near channel lines). Features list updated with channels and the new tool. The user-provided screenshot and demonstration video were renamed to `automatic_channel.png` / `automatic_channel.webm` and embedded in the README.
