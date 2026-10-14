@@ -1,7 +1,17 @@
 # CHANGELOG
 
+2026-10-15
+
+- Added the **Trading** main menu, with **Channel Scanner** as its first item: the `channel_scanner.py` tool inside the application.
+  - New `pystalker/core/channel_scanner.py` holds the shared scanning logic (`scan_channel_proximity`); the standalone CLI script now imports it and produces byte-identical output (verified by diffing full and single-symbol runs before/after the refactor).
+  - New `pystalker/gui/channel_scanner_dialog.py`: non-modal dialog with the near-line table (asset, ascending/descending, near lower/upper, proximity %, last close, line value), a broken-channels table in red, the report timestamp, an adjustable max-proximity spinbox (default 10%) with a Scan/refresh button, and a status summary. **Double-clicking a row opens that asset's chart.**
+  - Verified with the real database (a copy): the dialog's 26 near rows and 5 broken channels match the shared core exactly (values compared numerically), the 2% proximity filter matches, double-click opens the right chart, reopening reuses the single dialog instance, and the console stays clean.
+
 2026-10-14
 
+- Added **last close price tag on the right price axis** (bright red, TradingView style): always-visible red tag in the ruler showing the last close price of the displayed data, positioned over the axis in scene coordinates (same safe pattern as the crosshair tag), repositioned on every vertical pan/zoom, hidden while the last close is outside the visible price range, and updated on redraws (deferred until the axis layout is valid - the axis' scene transform is stale mid-redraw).
+  - The crosshair price tag draws on top of it when both overlap; respects the limit-date view (shows the displayed data's last close, not the full history's).
+  - Verified: correct text and exact axis position, vertical-pan tracking, out-of-range hiding/return, 3 redraws with forced garbage collection (no crash), 996 pixel-verified red pixels in the axis strip, coexistence with the crosshair tag, limit-date replot, and a full real-window regression (chart intact, crosshair default-off, automatic channel + S-R, console clean).
 - **Fixed the blank chart regression** introduced with the crosshair price tag: the tag was parented to the right price axis, which is destroyed and recreated on every chart redraw - when the old axis was garbage collected the tag's underlying object died with it, so the next redraw crashed with `RuntimeError: wrapped C/C++ object of type TextItem has been deleted` right after clearing the plot, leaving an empty chart. Reproduced deterministically (second redraw with forced GC) and fixed by attaching the tag to the plot scene (which lives as long as the plot) and computing its position over the axis in scene coordinates on every update. Verified across 5 consecutive redraws with forced garbage collection: no crash, chart content intact, price tag still working; full cursor/tag regression suite passes.
 - **Crosshair now OFF by default**: every graph starts with the normal mouse cursor; the full-view crosshair appears only when the Crosshair toolbar button is activated (the button now starts unchecked). Toggling off while hovering restores the normal cursor immediately.
 - **Crosshair price tag on the right price axis (TradingView style)**: while the crosshair is active, the current crosshair price is shown in the right price ruler as a white price tag that follows the horizontal line (positioned on the axis, re-attached on every chart redraw, hidden with the crosshair).

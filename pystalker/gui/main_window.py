@@ -88,6 +88,7 @@ class PyStalkerWindow(QMainWindow):
         self.database = Database()
         self.current_symbol = None
         self.indicator_dialog = None
+        self._channel_scanner_dialog = None
         
         self.setWindowTitle("PyStalker - Stock Charting Tool")
         self.setMinimumSize(1024, 768)
@@ -369,6 +370,12 @@ class PyStalkerWindow(QMainWindow):
         snap_close_action = QAction("Close", self)
         snap_close_action.triggered.connect(lambda: self.set_snap_mode('close'))
         snap_menu.addAction(snap_close_action)
+        
+        trading_menu = menubar.addMenu("&Trading")
+        
+        channel_scanner_action = QAction("Channel Scanner", self)
+        channel_scanner_action.triggered.connect(self.on_channel_scanner)
+        trading_menu.addAction(channel_scanner_action)
         
         view_menu = menubar.addMenu("&View")
         
@@ -1593,6 +1600,16 @@ class PyStalkerWindow(QMainWindow):
                 self.draw_mode_action.setChecked(True)
             tab.chart_view.start_desc_channel_drawing()
             tab.chart_view.setFocus()
+    
+    def on_channel_scanner(self):
+        """Trading > Channel Scanner: open the in-app channel scanner."""
+        if self._channel_scanner_dialog is None:
+            from .channel_scanner_dialog import ChannelScannerDialog
+            self._channel_scanner_dialog = ChannelScannerDialog(self.database, self)
+        self._channel_scanner_dialog.show()
+        self._channel_scanner_dialog.raise_()
+        self._channel_scanner_dialog.activateWindow()
+        self._channel_scanner_dialog.run_scan()
     
     def on_automatic_channel(self):
         tab = self.chart_tabs.get_current_tab()
