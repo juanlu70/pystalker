@@ -93,13 +93,14 @@ class TrendLineItem(pg.GraphicsObject):
 
 
 class HLineItem(pg.GraphicsObject):
-    def __init__(self, y, x_min=0, x_max=1000, color='#FFD700', width=1):
+    def __init__(self, y, x_min=0, x_max=1000, color='#FFD700', width=1, label_suffix=''):
         pg.GraphicsObject.__init__(self)
         self.y = y
         self.x_min = x_min
         self.x_max = x_max
         self.color = color
         self.width = width
+        self.label_suffix = label_suffix
         self.show_endpoints = False
         self.label = pg.TextItem('', color=pg.mkColor(color), anchor=(0, 0.5))
         self.label.setFont(pg.QtGui.QFont('Monospace', 8))
@@ -119,7 +120,7 @@ class HLineItem(pg.GraphicsObject):
         self.update()
     
     def _update_label(self):
-        self.label.setText(f'{self.y:.2f}')
+        self.label.setText(f'{self.y:.2f}{self.label_suffix}')
         self.label.setColor(pg.mkColor(self.color))
     
     def setColor(self, color):
@@ -451,7 +452,8 @@ class ChartView(QWidget):
         # Full-view crosshair: two dashed lines spanning the whole visible
         # graph, following the mouse for quick value comparison.
         # When active it replaces the mouse cursor (toolbar Crosshair toggle).
-        self.crosshair_enabled = True
+        # OFF by default: the normal mouse cursor unless the user activates it.
+        self.crosshair_enabled = False
         crosshair_pen = pg.mkPen((255, 255, 255, 110), width=1, style=Qt.PenStyle.DashLine)
         self.crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen=crosshair_pen, hoverPen=crosshair_pen)
         self.crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen=crosshair_pen, hoverPen=crosshair_pen)
@@ -461,6 +463,15 @@ class ChartView(QWidget):
         self.crosshair_v.setVisible(False)
         self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
         self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
+        
+        # Crosshair price tag drawn on the right price axis (TradingView style):
+        # shows the current crosshair price in the ruler while the crosshair is
+        # active. Parented to the right axis, re-attached on every redraw.
+        self.crosshair_price_label = pg.TextItem('', color='#000000', anchor=(1, 0.5),
+                                                 border=pg.mkColor('#8A8A8A'),
+                                                 fill=pg.mkColor('#FFFFFF'))
+        self.crosshair_price_label.setFont(pg.QtGui.QFont('monospace', 8))
+        self.crosshair_price_label.setVisible(False)
         
         plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved, 
                                            rateLimit=60, slot=self.mouse_moved)
@@ -713,7 +724,8 @@ class ChartView(QWidget):
         if drawing_type == 'hline':
             orig_y = drawing['points'][0][1] if drawing.get('points') else 0
             new_y = orig_y + offset_y
-            item = HLineItem(new_y, x_min, x_max, color, width)
+            suffix = copy.deepcopy(drawing.get('params', {})).get('label_suffix', '')
+            item = HLineItem(new_y, x_min, x_max, color, width, label_suffix=suffix)
             item.show_endpoints = self._draw_mode
             self.plot_widget.addItem(item)
             self.plot_widget.addItem(item.label, ignoreBounds=True)
@@ -1490,9 +1502,10 @@ class ChartView(QWidget):
 
         The vertical line snaps to the bar under the cursor; the horizontal
         line follows the exact value so levels can be compared at a glance.
-        While active, the crosshair replaces the mouse cursor. Hidden when
-        the mouse is outside the graph, in draw mode, or disabled via the
-        toolbar.
+        While active, the crosshair replaces the mouse cursor and the current
+        price is shown in the right price axis (TradingView style). Hidden
+        when the mouse is outside the graph, in draw mode, or disabled via
+        the toolbar.
         """
         active = (mouse_point is not None and self.crosshair_enabled
                   and not self._draw_mode and self.df is not None and len(self.df) > 0)
@@ -1508,11 +1521,34 @@ class ChartView(QWidget):
             x = float(x_idx)
         self.crosshair_v.setPos(x)
         self.crosshair_h.setPos(mouse_point.y())
+        self._update_crosshair_price_tag(mouse_point.y())
+    
+    def _update_crosshair_price_tag(self, price):
+        """Show the crosshair price over the right price axis, TradingView style.
+
+        The tag is a scene-level item positioned over the axis (in scene
+        coordinates) so it survives the axis being recreated on redraws.
+        """
+        try:
+            axis = self.plot_widget.getAxis('right')
+            y_min, y_max = self.view_box.viewRange()[1]
+            axis_height = axis.boundingRect().height()
+            if y_max <= y_min or axis_height <= 0:
+                return
+            self.crosshair_price_label.setText(f'{price:.2f}')
+            axis_y = (y_max - price) / (y_max - y_min) * axis_height
+            axis_x = axis.boundingRect().width() - 2
+            scene_pos = axis.mapToScene(pg.QtCore.QPointF(axis_x, axis_y))
+            self.crosshair_price_label.setPos(scene_pos)
+        except Exception:
+            pass
     
     def _set_crosshair_visible(self, visible: bool):
         for line in (self.crosshair_h, self.crosshair_v):
             if line.isVisible() != visible:
                 line.setVisible(visible)
+        if self.crosshair_price_label.isVisible() != visible:
+            self.crosshair_price_label.setVisible(visible)
     
     def leaveEvent(self, event):
         self._set_crosshair_visible(False)
@@ -1662,6 +1698,15 @@ class ChartView(QWidget):
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
         self.view_box = self.plot_widget.plotItem.vb
+        
+        # The crosshair price tag is added to the scene, NOT parented to the
+        # axis: the axis is destroyed and recreated on every redraw, and a
+        # child item would be destroyed with it (RuntimeError -> blank chart).
+        # Its position over the right axis is computed in scene coordinates
+        # on every crosshair update.
+        if self.crosshair_price_label.scene() is not self.plot_widget.scene():
+            self.plot_widget.scene().addItem(self.crosshair_price_label)
+        self.crosshair_price_label.setVisible(False)
         
         try:
             self.view_box.sigXRangeChanged.disconnect(self.update_date_ticks)
@@ -2147,6 +2192,47 @@ class ChartView(QWidget):
         self.plot_widget.update()
         return drawing
     
+    def add_automatic_sr(self):
+        """Create automatic long-term support/resistance lines (Draw > Automatic S-R).
+
+        Analyses ALL the displayed history: price levels where the market
+        bounced at least 3 times become yellow horizontal line drawings, with
+        the price and the touch count at the left edge (e.g. "57,747 (4x)").
+        They are normal drawings afterwards: never recalculated, editable and
+        persisted like any manually drawn horizontal line.
+        """
+        if self.df is None or self.df.empty:
+            return []
+        from ..core.support_resistance import find_support_resistance_levels
+        levels = find_support_resistance_levels(self.df)
+        if not levels:
+            return []
+        self.push_undo()
+        color = '#FFFF00'
+        x_min = -10
+        x_max = len(self.df) + 10
+        drawings = []
+        for lvl in levels:
+            suffix = f" ({lvl['touches']}x)"
+            item = HLineItem(lvl['price'], x_min, x_max, color, 1, label_suffix=suffix)
+            item.show_endpoints = self._draw_mode
+            self.plot_widget.addItem(item)
+            self.plot_widget.addItem(item.label, ignoreBounds=True)
+            drawing = {
+                'type': 'hline',
+                'item': item,
+                'points': [(0, lvl['price'])],
+                'color': color,
+                'snap': '',
+                'params': {'label_suffix': suffix},
+                'width': 1
+            }
+            self.drawings.append(drawing)
+            drawings.append(drawing)
+        self._update_hline_labels()
+        self.plot_widget.update()
+        return drawings
+
     def push_undo(self):
         snapshot = self._snapshot_drawings()
         self._undo_stack.append(snapshot)
@@ -2196,7 +2282,8 @@ class ChartView(QWidget):
                 y = points[0][1]
                 x_min = -10
                 x_max = len(self.df) + 10 if self.df is not None else 1000
-                item = HLineItem(y, x_min, x_max, color, width)
+                suffix = d.get('params', {}).get('label_suffix', '')
+                item = HLineItem(y, x_min, x_max, color, width, label_suffix=suffix)
                 self.plot_widget.addItem(item)
                 self.plot_widget.addItem(item.label, ignoreBounds=True)
                 self.drawings.append({
