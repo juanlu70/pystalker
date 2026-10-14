@@ -466,12 +466,25 @@ class ChartView(QWidget):
         
         # Crosshair price tag drawn on the right price axis (TradingView style):
         # shows the current crosshair price in the ruler while the crosshair is
-        # active. Parented to the right axis, re-attached on every redraw.
+        # active. Added to the scene (never parented to the axis, which is
+        # destroyed on every redraw - see the blank-chart fix).
         self.crosshair_price_label = pg.TextItem('', color='#000000', anchor=(1, 0.5),
                                                  border=pg.mkColor('#8A8A8A'),
                                                  fill=pg.mkColor('#FFFFFF'))
         self.crosshair_price_label.setFont(pg.QtGui.QFont('monospace', 8))
+        self.crosshair_price_label.setZValue(1001)
         self.crosshair_price_label.setVisible(False)
+        
+        # Last close price tag on the right price axis (bright red, always
+        # visible while the last close is inside the visible price range).
+        # Also scene-attached; positioned over the axis in scene coordinates
+        # and kept in sync with vertical panning/zooming.
+        self.last_close_label = pg.TextItem('', color='#FFFFFF', anchor=(1, 0.5),
+                                            border=pg.mkColor('#B30000'),
+                                            fill=pg.mkColor('#FF0000'))
+        self.last_close_label.setFont(pg.QtGui.QFont('monospace', 8))
+        self.last_close_label.setZValue(1000)
+        self.last_close_label.setVisible(False)
         
         plot_widget_proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved, 
                                            rateLimit=60, slot=self.mouse_moved)
@@ -1543,6 +1556,36 @@ class ChartView(QWidget):
         except Exception:
             pass
     
+    def _update_last_close_tag(self, *args):
+        """Show the last close price over the right price axis (bright red tag).
+
+        Always visible while the last close is inside the visible price
+        range; repositioned on every vertical pan/zoom (connected to the
+        view's Y-range change). Scene-attached like the crosshair price tag.
+        """
+        try:
+            if self.df is None or len(self.df) == 0 or 'Close' not in self.df.columns:
+                self.last_close_label.setVisible(False)
+                return
+            price = float(self.df['Close'].iloc[-1])
+            y_min, y_max = self.view_box.viewRange()[1]
+            axis = self.plot_widget.getAxis('right')
+            axis_height = axis.boundingRect().height()
+            if y_max <= y_min or axis_height <= 0 or not (y_min <= price <= y_max):
+                self.last_close_label.setVisible(False)
+                return
+            self.last_close_label.setText(f'{price:.2f}')
+            axis_y = (y_max - price) / (y_max - y_min) * axis_height
+            axis_x = axis.boundingRect().width() - 2
+            scene_pos = axis.mapToScene(pg.QtCore.QPointF(axis_x, axis_y))
+            self.last_close_label.setPos(scene_pos)
+            self.last_close_label.setVisible(True)
+        except Exception:
+            try:
+                self.last_close_label.setVisible(False)
+            except Exception:
+                pass
+    
     def _set_crosshair_visible(self, visible: bool):
         for line in (self.crosshair_h, self.crosshair_v):
             if line.isVisible() != visible:
@@ -1699,14 +1742,17 @@ class ChartView(QWidget):
         self.plot_widget.setAxisItems({'right': price_axis})
         self.view_box = self.plot_widget.plotItem.vb
         
-        # The crosshair price tag is added to the scene, NOT parented to the
-        # axis: the axis is destroyed and recreated on every redraw, and a
-        # child item would be destroyed with it (RuntimeError -> blank chart).
-        # Its position over the right axis is computed in scene coordinates
-        # on every crosshair update.
+        # The price tags are added to the scene, NOT parented to the axis:
+        # the axis is destroyed and recreated on every redraw, and a child
+        # item would be destroyed with it (RuntimeError -> blank chart).
+        # Their positions over the right axis are computed in scene
+        # coordinates on every update.
         if self.crosshair_price_label.scene() is not self.plot_widget.scene():
             self.plot_widget.scene().addItem(self.crosshair_price_label)
         self.crosshair_price_label.setVisible(False)
+        if self.last_close_label.scene() is not self.plot_widget.scene():
+            self.plot_widget.scene().addItem(self.last_close_label)
+        self.last_close_label.setVisible(False)
         
         try:
             self.view_box.sigXRangeChanged.disconnect(self.update_date_ticks)
@@ -1715,6 +1761,7 @@ class ChartView(QWidget):
             self.view_box.sigYRangeChanged.disconnect(self.adjust_volume_height)
             self.view_box.sigXRangeChanged.disconnect(self.update_ohlc_legend_position)
             self.view_box.sigXRangeChanged.disconnect(self._update_hline_labels)
+            self.view_box.sigYRangeChanged.disconnect(self._update_last_close_tag)
         except TypeError:
             pass
         
@@ -1724,6 +1771,7 @@ class ChartView(QWidget):
         self.view_box.sigYRangeChanged.connect(self.adjust_volume_height)
         self.view_box.sigXRangeChanged.connect(self.update_ohlc_legend_position)
         self.view_box.sigXRangeChanged.connect(self._update_hline_labels)
+        self.view_box.sigYRangeChanged.connect(self._update_last_close_tag)
         self.plot_widget.addItem(self.info_text, ignoreBounds=True)
         self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
         self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
@@ -1835,6 +1883,9 @@ class ChartView(QWidget):
             self.adjust_volume_height()
         else:
             self._needs_view_reset = True
+        # The right axis' scene transform is not valid until the layout pass
+        # completes, so position the last-close tag deferred (post-layout).
+        QTimer.singleShot(0, self._update_last_close_tag)
         
         if saved_drawings:
             self.restore_drawings(saved_drawings)
