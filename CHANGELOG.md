@@ -1,5 +1,12 @@
 # CHANGELOG
 
+2026-10-15
+
+- Added the **Trading** main menu, with **Channel Scanner** as its first item: the `channel_scanner.py` tool inside the application.
+  - New `pystalker/core/channel_scanner.py` holds the shared scanning logic (`scan_channel_proximity`); the standalone CLI script now imports it and produces byte-identical output (verified by diffing full and single-symbol runs before/after the refactor).
+  - New `pystalker/gui/channel_scanner_dialog.py`: non-modal dialog with the near-line table (asset, ascending/descending, near lower/upper, proximity %, last close, line value), a broken-channels table in red, the report timestamp, an adjustable max-proximity spinbox (default 10%) with a Scan/refresh button, and a status summary. **Double-clicking a row opens that asset's chart.**
+  - Verified with the real database (a copy): the dialog's 26 near rows and 5 broken channels match the shared core exactly (values compared numerically), the 2% proximity filter matches, double-click opens the right chart, reopening reuses the single dialog instance, and the console stays clean.
+
 2026-10-14
 
 - Added **last close price tag on the right price axis** (bright red, TradingView style): always-visible red tag in the ruler showing the last close price of the displayed data, positioned over the axis in scene coordinates (same safe pattern as the crosshair tag), repositioned on every vertical pan/zoom, hidden while the last close is outside the visible price range, and updated on redraws (deferred until the axis layout is valid - the axis' scene transform is stale mid-redraw).
