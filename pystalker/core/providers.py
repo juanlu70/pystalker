@@ -2,12 +2,19 @@
 PyStalker - Data providers for downloading/importing market data
 """
 
+import json
 import os
-from datetime import datetime
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
 from typing import Optional
 import pandas as pd
 
 from .data import Bar, BarData
+
+# friendly display names for the Phemex asset categories (classify_product)
+PHEMEX_CATEGORY_LABELS = {'perp': 'Perp', 'tradfi': 'TradFi',
+                          'tokenized': 'Tokenized', 'crypto': 'Crypto'}
 
 
 class DataProvider:
@@ -146,12 +153,188 @@ class CSVProvider(DataProvider):
         return bar_data
 
 
+class PhemexProvider(DataProvider):
+    """Phemex exchange public market data.
+
+    Uses the public (no API key) kline endpoint, which serves the perpetual
+    contracts (legacy coin-margined BTCUSD... and the USDT/USDC-margined
+    BTCUSDT, TSLAUSDT, NAS100USDT...), the spot pairs (sBTCUSDT...) and the
+    tokenized assets (sTSLAONUSDT, sAAPLONUSDT...):
+
+        GET /exchange/public/md/v2/kline/last?symbol=<symbol>&resolution=<resolution>&limit=<limit>
+
+    Kline rows are [timestamp_seconds, interval, last_close, open, high, low,
+    close, volume, turnover, symbol], newest first. The V2 hedged perps
+    return human-readable unscaled prices; the legacy perps and spot pairs
+    return integers scaled by the symbol's priceScale (from
+    GET /public/products, fetched once and cached), and spot volumes are
+    scaled by 10^8.
+
+    The endpoint returns the most recent candles only (max limit 1000), so
+    about 2.7 years of daily data are available per request.
+    """
+    BASE_URL = 'https://api.phemex.com'
+
+    RESOLUTION_MAP = {
+        BarData.MINUTE_1: 60,
+        BarData.MINUTE_5: 300,
+        BarData.MINUTE_15: 900,
+        BarData.MINUTE_30: 1800,
+        BarData.MINUTE_60: 3600,
+        BarData.DAILY: 86400,
+        BarData.WEEKLY: 604800,
+        BarData.MONTHLY: 2592000,
+    }
+
+    def __init__(self):
+        super().__init__()
+        self._products = None
+        self._currencies = None
+
+    def _http_get(self, path: str) -> dict:
+        url = self.BASE_URL + path
+        req = urllib.request.Request(url, headers={'User-Agent': 'pystalker'})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            # try to surface Phemex's own error message from the response body
+            try:
+                body = e.read().decode('utf-8')
+                detail = json.loads(body).get('msg') or body
+            except Exception:
+                detail = e.reason
+            raise ValueError(f"Phemex request failed ({e.code}): {detail}") from e
+
+    def _load_products_data(self, force: bool = False):
+        if self._products is None or force:
+            data = self._http_get('/public/products')
+            products_data = data.get('data') or {}
+            # the response splits the product registry in sections: `products`
+            # holds the spot pairs and the legacy coin-margined perpetuals,
+            # `perpProductsV2` holds the USDT/USDC-margined perpetual
+            # contracts (BTCUSDT, TSLAUSDT, NAS100USDT...) - merge both
+            self._products = (products_data.get('products') or []) + \
+                (products_data.get('perpProductsV2') or [])
+            currencies = products_data.get('currencies') or []
+            self._currencies = {c.get('currency'): c for c in currencies if c.get('currency')}
+
+    def get_products(self, force: bool = False) -> list:
+        """All Phemex products (cached), as returned by GET /public/products."""
+        self._load_products_data(force)
+        return self._products
+
+    def get_currencies(self, force: bool = False) -> dict:
+        """All Phemex currencies (cached), as {currency symbol: record}."""
+        self._load_products_data(force)
+        return self._currencies
+
+    def is_tokenized_asset(self, product: dict) -> bool:
+        """True for spot pairs of tokenized real-world assets.
+
+        These are Phemex's tokenized stocks/ETFs/commodities: the Ondo series
+        (TSLAON, SPYON, QQQON, IAUON... whose currency name ends with
+        "Ondo Tokenized") and the xStocks series (TSLAX, SPCXX... whose
+        currency name contains "xStock").
+        """
+        if product.get('type') != 'Spot':
+            return False
+        currency = self.get_currencies().get(product.get('baseCurrency') or '')
+        name = (currency.get('name') or '').lower() if currency else ''
+        return 'tokenized' in name or 'xstock' in name
+
+    def classify_product(self, product: dict) -> str:
+        """The asset category: 'perp', 'tradfi', 'tokenized' or 'crypto'.
+
+        perp: perpetual futures on crypto (legacy coin-margined contracts and
+        the USDT/USDC-margined V2 perps). tradfi: V2 perp futures on
+        traditional assets - tokenized stocks, indices, commodities and the
+        pre-IPO/pre-market names. tokenized: spot pairs of tokenized
+        real-world assets. crypto: the normal spot pairs.
+        """
+        ptype = product.get('type')
+        if ptype == 'PerpetualV2':
+            if product.get('perpProductSubType') in ('TradFi', 'PreMarket'):
+                return 'tradfi'
+            return 'perp'
+        if ptype == 'Perpetual':
+            return 'perp'
+        if self.is_tokenized_asset(product):
+            return 'tokenized'
+        return 'crypto'
+
+    def get_product_name(self, product: dict) -> str:
+        """Human-readable name of the traded asset (its currency name)."""
+        base = product.get('baseCurrency') or product.get('settleCurrency') or ''
+        currency = self.get_currencies().get(base)
+        return (currency.get('name') or '') if currency else ''
+
+    def get_product(self, symbol: str) -> Optional[dict]:
+        for p in self.get_products():
+            if p.get('symbol') == symbol:
+                return p
+        return None
+
+    def fetch(self, symbol: str, start_date: Optional[datetime] = None,
+              end_date: Optional[datetime] = None, interval: str = '1d') -> BarData:
+        resolution = self.RESOLUTION_MAP.get(interval)
+        if resolution is None:
+            raise ValueError(f"Phemex does not support the {interval} interval "
+                             f"(supported: 1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo)")
+
+        resp = self._http_get(
+            f'/exchange/public/md/v2/kline/last?symbol={symbol}&resolution={resolution}&limit=1000')
+        if resp.get('code') != 0:
+            raise ValueError(f"Phemex error for {symbol}: {resp.get('msg')}")
+        rows = (resp.get('data') or {}).get('rows') or []
+        if not rows:
+            raise ValueError(f"Phemex has no candles for {symbol} "
+                             f"(the asset may be too new or have no trading activity yet)")
+
+        product = self.get_product(symbol)
+        ptype = (product or {}).get('type')
+        # the V2 hedged perps (BTCUSDT...) return human-readable unscaled
+        # prices; the legacy perps and the spot pairs return integers scaled
+        # by the symbol's priceScale, and spot volumes are scaled by 10^8
+        if ptype == 'PerpetualV2':
+            price_scale = 1.0
+            volume_scale = 1.0
+        elif ptype == 'Spot':
+            # every spot pair uses price scale 10^8
+            price_scale = 10 ** int((product or {}).get('priceScale') or 8)
+            volume_scale = 1e8
+        else:  # legacy coin-margined perpetuals
+            price_scale = 10 ** int((product or {}).get('priceScale') or 4)
+            volume_scale = 1.0
+
+        bar_data = BarData(symbol)
+        for row in reversed(rows):  # newest first -> chronological
+            ts, _interval, _last_close, o, h, l, c, vol, _turnover = row[:9]
+            # kline timestamps are UTC; keep the candle's calendar date as the
+            # app's canonical naive local midnight
+            utc_dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+            if start_date and utc_dt < start_date:
+                continue
+            if end_date and utc_dt > end_date:
+                continue
+            bar_data.bars.append(Bar(
+                date=datetime(utc_dt.year, utc_dt.month, utc_dt.day),
+                open=float(o) / price_scale,
+                high=float(h) / price_scale,
+                low=float(l) / price_scale,
+                close=float(c) / price_scale,
+                volume=float(vol) / volume_scale
+            ))
+        return bar_data
+
+
 class DataManager:
     """Manages multiple data providers and cached data"""
     
     def __init__(self):
         self.yahoo_provider = YahooFinanceProvider()
         self.csv_provider = CSVProvider()
+        self.phemex_provider = PhemexProvider()
         self.cache = {}
     
     def fetch_yahoo(self, symbol: str, start_date: Optional[datetime] = None,
@@ -174,6 +357,40 @@ class DataManager:
         data = self.csv_provider.fetch(filepath, symbol, date_format, delimiter, columns)
         self.cache[cache_key] = data
         return data
+    
+    def fetch_phemex(self, symbol: str, start_date: Optional[datetime] = None,
+                     end_date: Optional[datetime] = None, interval: str = '1d') -> BarData:
+        cache_key = f"phemex:{symbol}:{interval}:{start_date}:{end_date}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        data = self.phemex_provider.fetch(symbol, start_date, end_date, interval)
+        self.cache[cache_key] = data
+        return data
+    
+    def fetch_symbol(self, symbol: str, start_date: Optional[datetime] = None,
+                     end_date: Optional[datetime] = None, interval: str = '1d'):
+        """Fetch a symbol trying Yahoo Finance first, then Phemex.
+
+        Phemex-only symbols (tokenized stocks like sTSLAONUSDT, exotic coin
+        pairs) fail on Yahoo and are served by Phemex automatically. Returns
+        (bar_data, source) with source 'yahoo' or 'phemex'.
+        """
+        yahoo_error = None
+        try:
+            data = self.fetch_yahoo(symbol, start_date, end_date, interval)
+            if data is not None and data.count() > 0:
+                return data, 'yahoo'
+            yahoo_error = f"Yahoo Finance returned no data for {symbol}"
+        except Exception as e:
+            yahoo_error = str(e)
+        try:
+            data = self.fetch_phemex(symbol, start_date, end_date, interval)
+            if data is not None and data.count() > 0:
+                return data, 'phemex'
+            raise ValueError("Phemex returned no data")
+        except Exception as e:
+            raise ValueError(f"Yahoo: {yahoo_error} | Phemex: {e}")
     
     def clear_cache(self):
         self.cache.clear()
