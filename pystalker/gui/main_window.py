@@ -31,7 +31,7 @@ def load_icon(name: str) -> QIcon:
     return QIcon()
 
 class DownloadThread(QThread):
-    finished = pyqtSignal(object)
+    finished = pyqtSignal(object, str)
     error = pyqtSignal(str)
     
     def __init__(self, data_manager, symbol, interval='1d'):
@@ -42,8 +42,8 @@ class DownloadThread(QThread):
     
     def run(self):
         try:
-            bar_data = self.data_manager.fetch_yahoo(self.symbol, interval=self.interval)
-            self.finished.emit(bar_data)
+            bar_data, source = self.data_manager.fetch_symbol(self.symbol, interval=self.interval)
+            self.finished.emit(bar_data, source)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -72,7 +72,7 @@ class DownloadDialog(QDialog):
         self.cancelled = False
     
     def set_symbol(self, symbol):
-        self.label.setText(f"Downloading {symbol} from Yahoo Finance...")
+        self.label.setText(f"Downloading {symbol}...")
     
     def on_cancel(self):
         self.cancelled = True
@@ -264,6 +264,10 @@ class PyStalkerWindow(QMainWindow):
         import_csv.triggered.connect(self.on_import_csv)
         file_menu.addAction(import_csv)
         
+        phemex_symbol_action = QAction("Download Phemex Symbol...", self)
+        phemex_symbol_action.triggered.connect(self.on_phemex_symbol_picker)
+        file_menu.addAction(phemex_symbol_action)
+        
         file_menu.addSeparator()
         
         create_spread_action = QAction("Create Spread...", self)
@@ -421,8 +425,8 @@ class PyStalkerWindow(QMainWindow):
         toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(toolbar)
         
-        download_action = QAction(load_icon('download'), "Download from Yahoo", self)
-        download_action.setToolTip("Download stock data from Yahoo Finance")
+        download_action = QAction(load_icon('download'), "Download", self)
+        download_action.setToolTip("Download data (Yahoo Finance, Phemex fallback)")
         download_action.triggered.connect(self.on_open_chart)
         toolbar.addAction(download_action)
         
@@ -604,12 +608,24 @@ class PyStalkerWindow(QMainWindow):
         chart_view.plot_candlesticks(chart_view._full_df, chart_view.symbol)
     
     def on_open_chart(self):
-        text, ok = QInputDialog.getText(self, "Download from Yahoo Finance", 
-                                         "Enter ticker symbol (e.g., AAPL, MSFT, GOOGL):")
+        text, ok = QInputDialog.getText(self, "Download", 
+                                         "Enter ticker symbol (Yahoo Finance, or a Phemex symbol\n"
+                                         "like sTSLAONUSDT for tokenized stocks):")
         if ok and text:
             symbol = text.strip().upper()
             if symbol:
                 self.fetch_symbol(symbol)
+    
+    def on_phemex_symbol_picker(self):
+        """File > Download Phemex Symbol: searchable list of Phemex products."""
+        from .phemex_dialog import PhemexSymbolDialog
+        try:
+            dialog = PhemexSymbolDialog(self.data_manager.phemex_provider, self)
+        except Exception as e:
+            QMessageBox.warning(self, "Phemex", f"Could not load the Phemex product list: {e}")
+            return
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_symbol:
+            self.fetch_symbol(dialog.selected_symbol)
     
     def on_import_csv(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -804,7 +820,11 @@ class PyStalkerWindow(QMainWindow):
             QApplication.processEvents()
             
             try:
-                bar_data = self.data_manager.fetch_yahoo(symbol)
+                # each symbol is served by the provider it was downloaded from
+                if self.database.load_data_source(symbol) == 'phemex':
+                    bar_data = self.data_manager.fetch_phemex(symbol)
+                else:
+                    bar_data = self.data_manager.fetch_yahoo(symbol)
                 if bar_data and bar_data.count() > 0:
                     self.database.save_bars(bar_data)
                     self.assets.add_asset(symbol, bar_data)
@@ -855,7 +875,8 @@ class PyStalkerWindow(QMainWindow):
         self.download_dialog.set_symbol(symbol)
         
         self.download_thread = DownloadThread(self.data_manager, symbol, interval)
-        self.download_thread.finished.connect(lambda data: self.on_download_finished(symbol, interval, data))
+        self.download_thread.finished.connect(
+            lambda data, source: self.on_download_finished(symbol, interval, data, source))
         self.download_thread.error.connect(self.on_download_error)
         
         self.download_thread.start()
@@ -865,12 +886,15 @@ class PyStalkerWindow(QMainWindow):
             self.download_thread.terminate()
             self.download_thread.wait()
     
-    def on_download_finished(self, symbol, interval, bar_data):
+    def on_download_finished(self, symbol, interval, bar_data, source='yahoo'):
         if self.download_dialog and self.download_dialog.isVisible():
             self.download_dialog.accept()
         
         self.assets.add_asset(symbol, bar_data)
         self.database.save_bars(bar_data, interval)
+        # remember which provider serves this symbol (Yahoo is the implicit default)
+        if source != 'yahoo':
+            self.database.save_data_source(symbol, source)
         
         if symbol not in self.navigator.get_assets():
             self.navigator.add_asset(symbol)
@@ -878,7 +902,8 @@ class PyStalkerWindow(QMainWindow):
         self.load_chart(symbol, interval)
         self.current_symbol = symbol
         
-        self.status_bar.showMessage(f"Downloaded {symbol} ({bar_data.count()} bars)")
+        origin = f" from {source.capitalize()}" if source != 'yahoo' else ""
+        self.status_bar.showMessage(f"Downloaded {symbol} ({bar_data.count()} bars{origin})")
         self._refresh_copies_of(symbol, bar_data)
     
     def on_download_error(self, error_msg):

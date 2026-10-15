@@ -648,6 +648,27 @@ class Database:
         
         return {}
     
+    def save_data_source(self, symbol: str, source: str):
+        """Remember which data provider serves this symbol ('phemex', ...).
+
+        Yahoo Finance is the implicit default (no row = Yahoo).
+        """
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        cursor.execute(f'INSERT OR REPLACE INTO "{symbol}_settings" (key, value) VALUES (?, ?)',
+                       ('data_source', source))
+        self.conn.commit()
+    
+    def load_data_source(self, symbol: str) -> str:
+        """The data provider serving this symbol ('yahoo' by default)."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f'SELECT value FROM "{symbol}_settings" WHERE key = ?', ('data_source',))
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else 'yahoo'
+        except Exception:
+            return 'yahoo'
+    
     def save_chart_style(self, symbol: str, style: str):
         self._ensure_symbol_tables(symbol)
         cursor = self.conn.cursor()

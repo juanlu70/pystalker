@@ -1477,7 +1477,7 @@ class ChartView(QWidget):
                         self.info_text.setText(f"{date_str}  {self.spread_symbol1}:{v1:.2f}%  {self.spread_symbol2}:{v2:.2f}%  Spread:{v1-v2:+.2f}%")
                     elif self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
                         ha = self._ha_df
-                        info = f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}"
+                        info = f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}{self._candle_change_str(ha['Open'].iloc[x_idx], ha['Close'].iloc[x_idx])}"
                         for ol in self.overlay_lines:
                             if ol.visible and x_idx < len(ol.plot_line.data):
                                 val = ol.plot_line.data[x_idx]
@@ -1485,7 +1485,7 @@ class ChartView(QWidget):
                                     info += f"  {ol.plot_line.name}:{val:.2f}"
                         self.info_text.setText(info)
                     else:
-                        info = f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}"
+                        info = f"{date_str}  O:{self.df['Open'].iloc[x_idx]:.2f}  H:{self.df['High'].iloc[x_idx]:.2f}  L:{self.df['Low'].iloc[x_idx]:.2f}  C:{self.df['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}{self._candle_change_str(self.df['Open'].iloc[x_idx], self.df['Close'].iloc[x_idx])}"
                         for ol in self.overlay_lines:
                             if ol.visible and x_idx < len(ol.plot_line.data):
                                 val = ol.plot_line.data[x_idx]
@@ -1922,6 +1922,20 @@ class ChartView(QWidget):
         self.range_changed.emit(left, right, ticks)
         self.update_info_position()
     
+    @staticmethod
+    def _candle_change_str(open_: float, close: float) -> str:
+        """The candle's percentage variation, signed ('  +1.25%' / '  -0.87%').
+
+        Positive candles (close above open) get a +, negative ones a -;
+        returns an empty string when the variation can't be computed.
+        """
+        try:
+            if open_ and np.isfinite(open_) and np.isfinite(close):
+                return f"  {(close - open_) / open_ * 100:+.2f}%"
+        except Exception:
+            pass
+        return ""
+
     def update_info_position(self):
         if self.df is not None and len(self.df) > 0:
             view_range = self.view_box.viewRange()
@@ -1952,9 +1966,9 @@ class ChartView(QWidget):
                     dt_str = str(last_idx)
             if self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
                 ha_row = self._ha_df.iloc[-1]
-                text = f"{dt_str}  O: {ha_row['Open']:.2f}  H: {ha_row['High']:.2f}  L: {ha_row['Low']:.2f}  C: {ha_row['Close']:.2f}"
+                text = f"{dt_str}  O: {ha_row['Open']:.2f}  H: {ha_row['High']:.2f}  L: {ha_row['Low']:.2f}  C: {ha_row['Close']:.2f}{self._candle_change_str(ha_row['Open'], ha_row['Close'])}"
             else:
-                text = f"{dt_str}  O: {last_row['Open']:.2f}  H: {last_row['High']:.2f}  L: {last_row['Low']:.2f}  C: {last_row['Close']:.2f}"
+                text = f"{dt_str}  O: {last_row['Open']:.2f}  H: {last_row['High']:.2f}  L: {last_row['Low']:.2f}  C: {last_row['Close']:.2f}{self._candle_change_str(last_row['Open'], last_row['Close'])}"
             self.info_text.setText(text)
             self.update_info_position()
     
