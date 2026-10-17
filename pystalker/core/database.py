@@ -66,7 +66,37 @@ class Database:
                 start_date TEXT NOT NULL
             )
         ''')
-        
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS operations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot TEXT NOT NULL DEFAULT 'No bot',
+                market TEXT NOT NULL DEFAULT 'Spot',
+                paper INTEGER NOT NULL DEFAULT 0,
+                asset TEXT NOT NULL,
+                side TEXT NOT NULL,
+                entry_price REAL NOT NULL,
+                volume REAL,
+                leverage TEXT,
+                entry_date TEXT NOT NULL,
+                exit_price REAL,
+                exit_date TEXT,
+                "open" INTEGER NOT NULL DEFAULT 1
+            )
+        ''')
+
+        # migrations for databases created before the volume and open columns:
+        # the exit price can be a reference while the operation still runs, so
+        # the closed state is the explicit "open" flag (closed rows are the
+        # pre-existing ones with an exit price)
+        cursor.execute('PRAGMA table_info(operations)')
+        existing_columns = [row[1] for row in cursor.fetchall()]
+        if 'volume' not in existing_columns:
+            cursor.execute('ALTER TABLE operations ADD COLUMN volume REAL')
+        if 'open' not in existing_columns:
+            cursor.execute('ALTER TABLE operations ADD COLUMN "open" INTEGER NOT NULL DEFAULT 1')
+            cursor.execute('UPDATE operations SET "open" = 0 WHERE exit_price IS NOT NULL')
+
         self.conn.commit()
         
         self._run_migrations()
@@ -648,6 +678,59 @@ class Database:
         
         return {}
     
+    def save_operation(self, op: dict) -> int:
+        """Insert a trading operation (see the Operations dialog) and return its id."""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO operations
+                (bot, market, paper, asset, side, entry_price, volume, leverage,
+                 entry_date, exit_price, exit_date, "open")
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
+              1 if op.get('paper') else 0, op.get('asset', ''),
+              op.get('side', 'Long'), float(op.get('entry_price') or 0),
+              float(op['volume']) if op.get('volume') else None,
+              op.get('leverage') or '', op.get('entry_date', ''),
+              float(op['exit_price']) if op.get('exit_price') else None,
+              op.get('exit_date') or None,
+              1 if op.get('open', True) else 0))
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def update_operation(self, op_id: int, op: dict):
+        """Update an existing trading operation by id."""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE operations SET
+                bot = ?, market = ?, paper = ?, asset = ?, side = ?,
+                entry_price = ?, volume = ?, leverage = ?, entry_date = ?,
+                exit_price = ?, exit_date = ?, "open" = ?
+            WHERE id = ?
+        ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
+              1 if op.get('paper') else 0, op.get('asset', ''),
+              op.get('side', 'Long'), float(op.get('entry_price') or 0),
+              float(op['volume']) if op.get('volume') else None,
+              op.get('leverage') or '', op.get('entry_date', ''),
+              float(op['exit_price']) if op.get('exit_price') else None,
+              op.get('exit_date') or None,
+              1 if op.get('open', True) else 0, op_id))
+        self.conn.commit()
+
+    def delete_operation(self, op_id: int):
+        """Delete a trading operation by id."""
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM operations WHERE id = ?', (op_id,))
+        self.conn.commit()
+
+    def load_operations(self) -> List[dict]:
+        """All trading operations, oldest entry first."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, bot, market, paper, asset, side, entry_price, volume, leverage, '
+                       'entry_date, exit_price, exit_date, "open" FROM operations ORDER BY entry_date')
+        columns = ['id', 'bot', 'market', 'paper', 'asset', 'side', 'entry_price', 'volume',
+                   'leverage', 'entry_date', 'exit_price', 'exit_date', 'open']
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def save_data_source(self, symbol: str, source: str):
         """Remember which data provider serves this symbol ('phemex', ...).
 

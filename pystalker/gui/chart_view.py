@@ -2318,6 +2318,46 @@ class ChartView(QWidget):
         self.restore_drawings(snapshot)
         return True
     
+    def add_operation_hline(self, price, color, op_id, op_kind):
+        """Add an operation-owned horizontal line (entry or exit) as a normal
+        hline drawing, tagged in params so operation edits/deletes can find
+        and replace it."""
+        x_min = -10
+        x_max = len(self.df) + 10 if self.df is not None else 1000
+        item = HLineItem(price, x_min, x_max, color, 1)
+        self.plot_widget.addItem(item)
+        self.plot_widget.addItem(item.label, ignoreBounds=True)
+        self.drawings.append({
+            'type': 'hline',
+            'item': item,
+            'points': [(0, price)],
+            'color': color,
+            'snap': '',
+            'params': {'operation_id': op_id, 'op_kind': op_kind},
+            'width': 1
+        })
+        self._update_hline_labels()
+        self.plot_widget.update()
+
+    def remove_operation_hlines(self, op_id):
+        """Remove an operation's entry/exit lines (identified by the
+        operation_id tag in params). Returns True if any was removed."""
+        removed = False
+        for drawing in list(self.drawings):
+            params = drawing.get('params') or {}
+            if drawing.get('type') == 'hline' and params.get('operation_id') == op_id:
+                item = drawing.get('item')
+                if item is not None:
+                    if hasattr(item, 'label'):
+                        self.plot_widget.removeItem(item.label)
+                    self.plot_widget.removeItem(item)
+                self.drawings.remove(drawing)
+                removed = True
+        if removed:
+            self._update_hline_labels()
+            self.plot_widget.update()
+        return removed
+
     def get_drawings(self):
         result = []
         for drawing in self.drawings:

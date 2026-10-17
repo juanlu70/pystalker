@@ -89,6 +89,7 @@ class PyStalkerWindow(QMainWindow):
         self.current_symbol = None
         self.indicator_dialog = None
         self._channel_scanner_dialog = None
+        self._operations_dialog = None
         
         self.setWindowTitle("PyStalker - Stock Charting Tool")
         self.setMinimumSize(1024, 768)
@@ -380,6 +381,10 @@ class PyStalkerWindow(QMainWindow):
         channel_scanner_action = QAction("Channel Scanner", self)
         channel_scanner_action.triggered.connect(self.on_channel_scanner)
         trading_menu.addAction(channel_scanner_action)
+        
+        operations_action = QAction("Operations", self)
+        operations_action.triggered.connect(self.on_operations)
+        trading_menu.addAction(operations_action)
         
         view_menu = menubar.addMenu("&View")
         
@@ -1635,6 +1640,16 @@ class PyStalkerWindow(QMainWindow):
         self._channel_scanner_dialog.raise_()
         self._channel_scanner_dialog.activateWindow()
         self._channel_scanner_dialog.run_scan()
+    
+    def on_operations(self):
+        """Trading > Operations: annotate and list trading operations."""
+        if self._operations_dialog is None:
+            from .operations_dialog import OperationsDialog
+            self._operations_dialog = OperationsDialog(self)
+        self._operations_dialog.show()
+        self._operations_dialog.raise_()
+        self._operations_dialog.activateWindow()
+        self._operations_dialog.refresh()
     
     def on_automatic_channel(self):
         tab = self.chart_tabs.get_current_tab()
