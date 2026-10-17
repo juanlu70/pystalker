@@ -38,6 +38,7 @@ Now the project is a MVP, can get daily data and I added some new improvements l
 - Drawings: Trendlines, Horizontal lines, Vertical lines, Ascending and Descending Channels (drawn manually or detected automatically), future support for fibonacci drawings.
 - Types of graphs: Lines, candles, Heikin Ashi, future support for open candles.
 - Tools: channel_scanner.py, to discover assets whose price is near a drawn channel line; phemex_assets.py, to list the Phemex perp futures and tokenized assets and their symbols.
+- Trading journal: Operations (Trading -> Operations) to annotate and list trading operations (bots, spots/futures, paper trading) with their volume, current price, percent gain and final PNL (money when the invested volume is known); each operation draws its entry line (bright green for longs, bright red for shorts) and its exit line (bright blue) on the asset's chart.
 
 
 # Automatic channel detection
