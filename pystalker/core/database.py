@@ -531,6 +531,30 @@ class Database:
         self._ensured_tables.discard(symbol)
         self.conn.commit()
     
+    def set_display_name(self, symbol: str, display_name: str):
+        """The personalized name shown in the program (ticker list, tabs,
+        Operations) while the data provider keeps using the official symbol.
+        An empty name clears it."""
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        if display_name and display_name != symbol:
+            cursor.execute(f'INSERT OR REPLACE INTO "{symbol}_settings" (key, value) '
+                           'VALUES (?, ?)', ('display_name', display_name))
+        else:
+            cursor.execute(f'DELETE FROM "{symbol}_settings" WHERE key = ?', ('display_name',))
+        self.conn.commit()
+
+    def get_display_name(self, symbol: str) -> str:
+        """The personalized display name of the symbol ('' when unset)."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(f'SELECT value FROM "{symbol}_settings" WHERE key = ?',
+                           ('display_name',))
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else ''
+        except Exception:
+            return ''
+
     def rename_symbol(self, old_symbol: str, new_symbol: str):
         cursor = self.conn.cursor()
         

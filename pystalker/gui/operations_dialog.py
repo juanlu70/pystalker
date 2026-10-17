@@ -316,7 +316,8 @@ class OperationsDialog(QDialog):
 
     def _resolve_asset(self, asset_name):
         """The program's actual symbol for a typed asset name (case-insensitive),
-        from the in-memory assets or the database; None when unknown."""
+        from the in-memory assets or the database - matching both the official
+        symbols and the personalized display names; None when unknown."""
         name = (asset_name or '').strip()
         if not name:
             return None
@@ -326,8 +327,12 @@ class OperationsDialog(QDialog):
         for symbol in assets.assets:
             if symbol.lower() == name.lower():
                 return symbol
-        for symbol in self._main_window.database.get_symbols():
+        database = self._main_window.database
+        for symbol in database.get_symbols():
             if symbol.lower() == name.lower():
+                return symbol
+        for symbol in database.get_symbols():
+            if (database.get_display_name(symbol) or '').lower() == name.lower():
                 return symbol
         return None
 
@@ -417,7 +422,14 @@ class OperationsDialog(QDialog):
         entry_item.setData(Qt.ItemDataRole.UserRole + 1, op.get('id'))
         self.table.setItem(row, 0, entry_item)
 
-        self.table.setItem(row, 1, QTableWidgetItem(op.get('asset') or ''))
+        # the asset column shows the personalized display name when the asset
+        # is in the program (the stored text keeps what the user typed)
+        resolved = self._resolve_asset(op.get('asset'))
+        if resolved is not None:
+            asset_text = self._main_window.database.get_display_name(resolved) or resolved
+        else:
+            asset_text = op.get('asset') or ''
+        self.table.setItem(row, 1, QTableWidgetItem(asset_text))
 
         paper_item = NumericItem('')
         paper_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled

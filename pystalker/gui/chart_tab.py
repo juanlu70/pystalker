@@ -280,15 +280,16 @@ class ChartTabWidget(QTabWidget):
             self.setCurrentIndex(index)
         return tab, True
     
-    def update_tab_label(self, symbol: str, interval: str):
+    def update_tab_label(self, symbol: str, interval: str, label: str = None):
         if symbol in self.tabs:
             tab = self.tabs[symbol]
             idx = self.indexOf(tab)
             if idx >= 0:
+                text = label or symbol
                 if interval and interval != '1d':
-                    self.setTabText(idx, f"{symbol} ({interval})")
+                    self.setTabText(idx, f"{text} ({interval})")
                 else:
-                    self.setTabText(idx, symbol)
+                    self.setTabText(idx, text)
     
     def get_current_symbol(self) -> str:
         tab = self.get_current_tab()

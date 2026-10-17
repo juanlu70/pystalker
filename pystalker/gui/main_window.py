@@ -833,7 +833,7 @@ class PyStalkerWindow(QMainWindow):
                 if bar_data and bar_data.count() > 0:
                     self.database.save_bars(bar_data)
                     self.assets.add_asset(symbol, bar_data)
-                    self.navigator.add_asset(symbol)
+                    self.navigator.add_asset(symbol, self.database.get_display_name(symbol) or None)
                     
                     tab = self.chart_tabs.tabs.get(symbol)
                     if tab:
@@ -902,8 +902,8 @@ class PyStalkerWindow(QMainWindow):
             self.database.save_data_source(symbol, source)
         
         if symbol not in self.navigator.get_assets():
-            self.navigator.add_asset(symbol)
-        
+            self.navigator.add_asset(symbol, self.database.get_display_name(symbol) or None)
+
         self.load_chart(symbol, interval)
         self.current_symbol = symbol
         
@@ -937,6 +937,8 @@ class PyStalkerWindow(QMainWindow):
         df = source.to_dataframe() if source else asset.to_dataframe()
         
         tab, is_new = self.chart_tabs.add_chart_tab(symbol, interval, set_current=set_current, database=self.database)
+        # the big graph box title shows the personalized name
+        tab.chart_view.set_chart_title(self.database.get_display_name(symbol) or symbol)
         
         if bull_color and bear_color:
             tab.chart_view.set_colors(bull_color, bear_color)
@@ -957,7 +959,8 @@ class PyStalkerWindow(QMainWindow):
             self.database.save_chart_style(symbol, 'line')
         
         tab.load_data(df, symbol, interval)
-        self.chart_tabs.update_tab_label(symbol, interval)
+        self.chart_tabs.update_tab_label(symbol, interval,
+                                         self.database.get_display_name(symbol) or None)
         
         if not is_new:
             saved_style = self.database.load_chart_style(symbol)
@@ -1093,34 +1096,101 @@ class PyStalkerWindow(QMainWindow):
                     tab.chart_view.plot_candlesticks(df, sym)
                     tab.chart_view._needs_view_reset = True
 
+    # friendly names of the data providers (shown in the rename dialog)
+    DATA_SOURCE_LABELS = {'yahoo': 'Yahoo Finance', 'phemex': 'Phemex'}
+
     def on_rename_graph(self, symbol: str):
-        from PyQt6.QtWidgets import QInputDialog
-        new_symbol, ok = QInputDialog.getText(self, "Rename Graph", f"New name for {symbol}:", text=symbol)
-        if not ok or not new_symbol:
+        """Rename an asset: the personalized name shown in the program (ticker
+        list, chart tab, Operations) and, optionally, the official ticker used
+        with the data provider (to fix assets renamed in the past). The dialog
+        also shows which data source serves the asset, as a point of
+        information for the user."""
+        dialog, official_edit, display_edit = self._build_rename_dialog(symbol)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        new_symbol = new_symbol.strip().upper()
-        if not new_symbol or new_symbol == symbol:
-            return
-        if new_symbol in self.assets.get_symbols():
-            return
-        
-        self.database.rename_symbol(symbol, new_symbol)
-        asset = self.assets.get_asset(symbol)
-        if asset:
-            asset.symbol = new_symbol
-            self.assets.remove_asset(symbol)
-            self.assets.add_asset(new_symbol, asset)
-        
-        self.navigator.rename_asset(symbol, new_symbol)
-        
-        if symbol in self.chart_tabs.tabs:
-            tab = self.chart_tabs.tabs[symbol]
-            tab.symbol = new_symbol
-            del self.chart_tabs.tabs[symbol]
-            self.chart_tabs.tabs[new_symbol] = tab
-            idx = self.chart_tabs.indexOf(tab)
-            self.chart_tabs.setTabText(idx, new_symbol)
-        
+        self._apply_asset_names(symbol, official_edit.text().strip(),
+                                display_edit.text().strip())
+
+    def _build_rename_dialog(self, symbol: str):
+        """Build the two-field rename dialog; returns (dialog, official_edit,
+        display_edit). Includes the read-only data source label."""
+        from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel
+        data_source = (self.database.load_data_source(symbol) or 'yahoo').lower()
+        source_label = self.DATA_SOURCE_LABELS.get(data_source, data_source.capitalize())
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Rename Asset")
+        form = QFormLayout(dialog)
+        display_edit = QLineEdit(self.database.get_display_name(symbol) or symbol)
+        display_edit.setToolTip("Shown in the ticker list, the chart tab and Operations.\n"
+                                "Can be any text, lower case included.")
+        form.addRow("Personalized name:", display_edit)
+        official_edit = QLineEdit(symbol)
+        official_edit.setToolTip("The ticker the data provider uses (e.g. SI=F).\n"
+                                 f"Only change it to fix an asset whose official\n"
+                                 f"ticker was renamed in the past; fetching will\n"
+                                 f"use this name (currently served by {source_label}).")
+        form.addRow("Official ticker:", official_edit)
+        source_widget = QLabel(source_label)
+        source_widget.setStyleSheet("color: gray;")
+        source_widget.setToolTip("The provider the program gets this asset's data from.")
+        form.addRow("Data source:", source_widget)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                    | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        return dialog, official_edit, display_edit
+
+    def _apply_asset_names(self, symbol: str, new_official: str, new_display: str):
+        """Apply the rename dialog: optionally re-key the asset to a new
+        official ticker (the data provider symbol), then set the personalized
+        display name. Case is preserved in the display name."""
+        new_official = new_official.strip().upper()
+        target = symbol
+        if new_official and new_official != symbol:
+            if new_official in self.assets.get_symbols():
+                return
+            self.database.rename_symbol(symbol, new_official)
+            asset = self.assets.get_asset(symbol)
+            if asset:
+                asset.symbol = new_official
+                self.assets.remove_asset(symbol)
+                self.assets.add_asset(new_official, asset)
+
+            self.navigator.rename_asset(symbol, new_official)
+            self.navigator.set_asset_display_name(new_official, new_display or new_official)
+
+            if symbol in self.chart_tabs.tabs:
+                tab = self.chart_tabs.tabs[symbol]
+                tab.symbol = new_official
+                del self.chart_tabs.tabs[symbol]
+                self.chart_tabs.tabs[new_official] = tab
+                idx = self.chart_tabs.indexOf(tab)
+                self.chart_tabs.setTabText(idx, new_display or new_official)
+                tab.chart_view.set_chart_title(new_display or new_official)
+            target = new_official
+        else:
+            # display-only change (setting it or clearing it back to the
+            # official symbol)
+            if new_display:
+                self.navigator.set_asset_display_name(symbol, new_display)
+                if symbol in self.chart_tabs.tabs:
+                    tab = self.chart_tabs.tabs[symbol]
+                    idx = self.chart_tabs.indexOf(tab)
+                    self.chart_tabs.setTabText(idx, new_display)
+                    tab.chart_view.set_chart_title(new_display)
+            else:
+                self.navigator.set_asset_display_name(symbol)
+                if symbol in self.chart_tabs.tabs:
+                    tab = self.chart_tabs.tabs[symbol]
+                    idx = self.chart_tabs.indexOf(tab)
+                    self.chart_tabs.setTabText(idx, symbol)
+                    tab.chart_view.set_chart_title(symbol)
+
+        self.database.set_display_name(target, new_display)
+        if self._operations_dialog is not None:
+            self._operations_dialog.refresh()
         self.save_session()
     
     def on_chart_closed(self, symbol: str):
@@ -1164,7 +1234,8 @@ class PyStalkerWindow(QMainWindow):
             tab.restore_splitter_state()
             tab.chart_view.plot_candlesticks(df, symbol)
             tab.chart_view._needs_view_reset = True
-            self.chart_tabs.update_tab_label(symbol, timeframe)
+            self.chart_tabs.update_tab_label(symbol, timeframe,
+                                             self.database.get_display_name(symbol) or None)
             self.save_session()
         else:
             self.fetch_symbol(symbol, timeframe)
@@ -1529,7 +1600,7 @@ class PyStalkerWindow(QMainWindow):
     def load_saved_symbols(self):
         symbols = self.database.get_symbols()
         for symbol in symbols:
-            self.navigator.add_asset(symbol)
+            self.navigator.add_asset(symbol, self.database.get_display_name(symbol) or None)
         spreads = self.database.load_spreads()
         for spread in spreads:
             self.navigator.add_spread(spread['name'])
