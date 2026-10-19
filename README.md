@@ -32,13 +32,13 @@ Now the project is a MVP, can get daily data and I added some new improvements l
 
 # Features
 
-- Downaloads data from Yahoo Finance (only daily data), from the Phemex exchange (crypto spot and perp futures, tokenized stocks/ETFs and TradFi perp futures, only daily data) and imports CSV files, future support for possibly other data source endpoints, also in real time!
+- Downaloads data from Yahoo Finance (only daily data), from the Phemex exchange (crypto spot and perp futures, tokenized stocks/ETFs and TradFi perp futures, only daily data), from the Pionex exchange (crypto spot pairs and perpetual futures, with deep history) and imports CSV files, future support for possibly other data source endpoints, also in real time!
 - Overlay technical indicators: Simple Moving Average, Exponential Moving Average, Bollinguer Bands, Parabollic SAR.
 - Stacked technical indicators: MACD, RSI, CCI, ADX, ATR, Momentum, ROC, Stochastic, Stochastic RSI, WILLR, OBV, MFI.
 - Drawings: Trendlines, Horizontal lines, Vertical lines, Ascending and Descending Channels (drawn manually or detected automatically), future support for fibonacci drawings.
 - Types of graphs: Lines, candles, Heikin Ashi, future support for open candles.
-- Tools: channel_scanner.py, to discover assets whose price is near a drawn channel line; phemex_assets.py, to list the Phemex perp futures and tokenized assets and their symbols.
-- Trading journal: Operations (Trading -> Operations) to annotate and list trading operations (bots, spots/futures, paper trading) with their volume, current price, percent gain and final PNL (money when the invested volume is known); each operation draws its entry line (bright green for longs, bright red for shorts) and its exit line (bright blue) on the asset's chart.
+- Tools: channel_scanner.py, to discover assets whose price is near a drawn channel line; phemex_assets.py, to list the Phemex perp futures and tokenized assets and their symbols; pionex_assets.py, to list the Pionex spot pairs and perpetual futures and their symbols.
+- Trading journal: Operations (Trading -> Operations) to annotate and list trading operations (bots, spots/futures, paper trading, planned projects that may or may not start) with their volume, current price, percent gain and final PNL (money when the invested volume is known); planned operations keep the plain gain/PNL look (no green/red) until they really start; each operation draws its entry line (bright green for longs, bright red for shorts) and its exit line (bright blue) on the asset's chart.
 - Assets have an official ticker for the data provider and a personalized display name (lower case allowed) shown in the ticker list, chart tabs and Operations, so renamed assets keep updating from the right source.
 
 
@@ -97,12 +97,13 @@ AMD                  Ascending   Upper          7.66%        608.10        658.5
 
 # Data sources
 
-Daily candles come from two download sources, and you don't have to think about which one to use:
+Daily candles come from three download sources, and you don't have to think about which one to use:
 
 - **Yahoo Finance** for stocks, indices, bonds, forex and the big crypto pairs.
 - **Phemex** (public API, no account needed) for everything Yahoo can't serve: the USDT/USDC perp futures (BTCUSDT, ETHUSDT...), the TradFi perp futures on tokenized stocks/indices/commodities (TSLAUSDT, NAS100USDT, XAUUSDT - gold...), the spot tokenized stocks (TSLA, AAPL, NVDA... traded against USDT around the clock) and the long tail of crypto pairs.
+- **Pionex** (public API, no account needed) for its spot pairs (`BTC_USDT`, including the xStocks tokenized stocks `AAPLX_USDT`, `TSLAX_USDT`, `SPYX_USDT`...) and its perpetual futures (`BTC_USDT_PERP`), with deeper history: the kline endpoint pages back up to 10,000 daily candles (BTC_USDT reaches back to 2017).
 
-You type the symbol in the normal Download flow and the program tries Yahoo Finance first; if Yahoo has nothing for that symbol it falls back to Phemex automatically, so Phemex-only symbols like `sTSLAONUSDT` or `sBTCUSDT` simply download. Each asset remembers which source served it, so **Update All Stock Data** keeps fetching every asset from its right source. Phemex serves up to the last 1000 daily candles (around 2.7 years), more than enough for the automatic channel (1 year) and the S-R and scanner tools.
+You type the symbol in the normal Download flow and the program tries Yahoo Finance first; if Yahoo has nothing for that symbol it falls back to Phemex and then to Pionex automatically, so Phemex-only symbols like `sTSLAONUSDT` or `sBTCUSDT` and Pionex-only symbols like `BTC_USDT` or `BTC_USDT_PERP` simply download. Each asset remembers which source served it, so **Update All Stock Data** keeps fetching every asset from its right source. Phemex serves up to the last 1000 daily candles (around 2.7 years), more than enough for the automatic channel (1 year) and the S-R and scanner tools.
 
 Since the Phemex symbol names are technical (the `s` prefix is their spot convention, `sTSLAONUSDT` is TSLAON/USDT), **File -> Download Phemex Symbol...** opens a searchable list of every listed Phemex product (spot pairs, crypto perp futures and TradFi/tokenized perps - search "Tesla", "gold", "BTC"... by asset name and double-click to download).
 
@@ -114,6 +115,16 @@ python phemex_assets.py --search Tesla
 python phemex_assets.py --type tradfi     # only the tokenized asset perps
 python phemex_assets.py --type crypto      # the normal crypto spot pairs
 python phemex_assets.py --type all
+```
+
+For Pionex, `pionex_assets.py` lists all its products (940: the spot pairs and the perpetual futures, with a NAME column for the perpetuals) with the exact symbols the Download flow accepts:
+
+```
+python pionex_assets.py
+python pionex_assets.py --search BTC
+python pionex_assets.py --type spot        # only the spot pairs
+python pionex_assets.py --type perp         # only the perpetual futures
+python pionex_assets.py --all               # include the disabled products
 ```
 
 

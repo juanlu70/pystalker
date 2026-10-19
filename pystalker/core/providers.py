@@ -4,6 +4,7 @@ PyStalker - Data providers for downloading/importing market data
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -328,6 +329,118 @@ class PhemexProvider(DataProvider):
         return bar_data
 
 
+class PionexProvider(DataProvider):
+    """Pionex exchange public market data.
+
+    Uses the public (no API key) REST API - the same endpoint serves the spot
+    pairs (BTC_USDT, AAPLX_USDT - including their xStocks tokenized assets)
+    and the perpetual futures (BTC_USDT_PERP, TSLAX_USDT_PERP...):
+
+        GET /api/v1/market/klines?symbol=<symbol>&interval=<interval>&limit=<limit>[&endTime=<ms>]
+
+    Klines are {time: ms, open/close/high/low/volume: unscaled strings},
+    newest first. Errors come back with HTTP 200 as
+    {result: false, code, message}. The endpoint serves at most 500 klines
+    per request, so fetch() pages back with endTime up to MAX_BARS (the
+    documented limit is 10,000 records). The product lists come from
+    GET /api/v1/common/symbols (spot) and ?type=PERP (perpetuals).
+
+    Interval mapping: 1M/5M/15M/30M/60M/4H/8H/12H/1D (spot and perpetuals
+    alike; weekly/monthly klines are rejected by the live API despite the
+    docs). The daily interval starts at UTC 00:00.
+    """
+    BASE_URL = 'https://api.pionex.com'
+    MAX_BARS = 10000
+
+    INTERVAL_MAP = {
+        BarData.MINUTE_1: '1M',
+        BarData.MINUTE_5: '5M',
+        BarData.MINUTE_15: '15M',
+        BarData.MINUTE_30: '30M',
+        BarData.MINUTE_60: '60M',
+        BarData.DAILY: '1D',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self._symbols = None
+
+    def _http_get(self, path: str) -> dict:
+        url = self.BASE_URL + path
+        req = urllib.request.Request(url, headers={'User-Agent': 'pystalker'})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode('utf-8'))
+        if payload.get('result') is False:
+            raise ValueError(f"Pionex error ({payload.get('code')}): {payload.get('message')}")
+        return payload
+
+    def get_symbols(self, force: bool = False) -> list:
+        """All Pionex products (cached): the spot pairs and the perpetual
+        futures, each record with its type (SPOT/PERP) and enable flag."""
+        if self._symbols is None or force:
+            spot = (self._http_get('/api/v1/common/symbols').get('data') or {}).get('symbols') or []
+            perp = (self._http_get('/api/v1/common/symbols?type=PERP').get('data') or {}).get('symbols') or []
+            self._symbols = spot + perp
+        return self._symbols
+
+    def get_product(self, symbol: str) -> Optional[dict]:
+        for product in self.get_symbols():
+            if product.get('symbol') == symbol:
+                return product
+        return None
+
+    def fetch(self, symbol: str, start_date: Optional[datetime] = None,
+              end_date: Optional[datetime] = None, interval: str = '1d') -> BarData:
+        interval_code = self.INTERVAL_MAP.get(interval)
+        if interval_code is None:
+            raise ValueError(f"Pionex does not support the {interval} interval "
+                             f"(supported: 1m, 5m, 15m, 30m, 1h, 1d)")
+
+        rows = []
+        seen_times = set()
+        end_time = None
+        while len(rows) < self.MAX_BARS:
+            path = (f'/api/v1/market/klines?symbol={symbol}&interval={interval_code}'
+                    f'&limit=500')
+            if end_time is not None:
+                path += f'&endTime={end_time}'
+            klines = (self._http_get(path).get('data') or {}).get('klines') or []
+            for kline in klines:
+                t = kline.get('time')
+                if t in seen_times:
+                    continue
+                seen_times.add(t)
+                rows.append(kline)
+            if len(klines) < 500:
+                break
+            end_time = klines[-1].get('time')
+            time.sleep(0.12)   # stay within the 10 req/s public limit
+
+        if not rows:
+            raise ValueError(f"Pionex has no candles for {symbol} "
+                             f"(the asset may be too new or have no trading activity yet)")
+
+        bar_data = BarData(symbol)
+        for kline in reversed(rows):  # newest first -> chronological
+            # kline times are UTC milliseconds; keep the candle's calendar
+            # date as the app's canonical naive local midnight
+            utc_dt = datetime.fromtimestamp(kline['time'] / 1000, tz=timezone.utc)
+            utc_dt = utc_dt.replace(tzinfo=None)
+            if start_date and utc_dt < start_date:
+                continue
+            if end_date and utc_dt > end_date:
+                continue
+            bar_data.bars.append(Bar(
+                date=datetime(utc_dt.year, utc_dt.month, utc_dt.day),
+                open=float(kline['open']),
+                high=float(kline['high']),
+                low=float(kline['low']),
+                close=float(kline['close']),
+                volume=float(kline['volume'])
+            ))
+        return bar_data
+
+
 class DataManager:
     """Manages multiple data providers and cached data"""
     
@@ -335,6 +448,7 @@ class DataManager:
         self.yahoo_provider = YahooFinanceProvider()
         self.csv_provider = CSVProvider()
         self.phemex_provider = PhemexProvider()
+        self.pionex_provider = PionexProvider()
         self.cache = {}
     
     def fetch_yahoo(self, symbol: str, start_date: Optional[datetime] = None,
@@ -368,29 +482,46 @@ class DataManager:
         self.cache[cache_key] = data
         return data
     
+    def fetch_pionex(self, symbol: str, start_date: Optional[datetime] = None,
+                     end_date: Optional[datetime] = None, interval: str = '1d') -> BarData:
+        cache_key = f"pionex:{symbol}:{interval}:{start_date}:{end_date}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        data = self.pionex_provider.fetch(symbol, start_date, end_date, interval)
+        self.cache[cache_key] = data
+        return data
+
+    def fetch_by_source(self, source: str, symbol: str, interval: str = '1d') -> BarData:
+        """Fetch a symbol from the provider that serves it ('phemex', 'pionex';
+        anything else means Yahoo Finance, the implicit default)."""
+        if source == 'phemex':
+            return self.fetch_phemex(symbol, interval=interval)
+        if source == 'pionex':
+            return self.fetch_pionex(symbol, interval=interval)
+        return self.fetch_yahoo(symbol, interval=interval)
+
     def fetch_symbol(self, symbol: str, start_date: Optional[datetime] = None,
                      end_date: Optional[datetime] = None, interval: str = '1d'):
-        """Fetch a symbol trying Yahoo Finance first, then Phemex.
+        """Fetch a symbol trying Yahoo Finance first, then Phemex, then Pionex.
 
-        Phemex-only symbols (tokenized stocks like sTSLAONUSDT, exotic coin
-        pairs) fail on Yahoo and are served by Phemex automatically. Returns
-        (bar_data, source) with source 'yahoo' or 'phemex'.
+        Exchange-only symbols (Pionex's BTC_USDT/BTC_USDT_PERP, Phemex's
+        BTCUSDT/sTSLAONUSDT, tokenized stocks) fail on the other providers and
+        are served by their exchange automatically. Returns (bar_data, source)
+        with source 'yahoo', 'phemex' or 'pionex'.
         """
-        yahoo_error = None
-        try:
-            data = self.fetch_yahoo(symbol, start_date, end_date, interval)
-            if data is not None and data.count() > 0:
-                return data, 'yahoo'
-            yahoo_error = f"Yahoo Finance returned no data for {symbol}"
-        except Exception as e:
-            yahoo_error = str(e)
-        try:
-            data = self.fetch_phemex(symbol, start_date, end_date, interval)
-            if data is not None and data.count() > 0:
-                return data, 'phemex'
-            raise ValueError("Phemex returned no data")
-        except Exception as e:
-            raise ValueError(f"Yahoo: {yahoo_error} | Phemex: {e}")
+        errors = []
+        for source, fetcher in (('yahoo', self.fetch_yahoo),
+                                ('phemex', self.fetch_phemex),
+                                ('pionex', self.fetch_pionex)):
+            try:
+                data = fetcher(symbol, start_date, end_date, interval)
+                if data is not None and data.count() > 0:
+                    return data, source
+                errors.append(f"{source.capitalize()}: returned no data for {symbol}")
+            except Exception as e:
+                errors.append(f"{source.capitalize()}: {e}")
+        raise ValueError(' | '.join(errors))
     
     def clear_cache(self):
         self.cache.clear()

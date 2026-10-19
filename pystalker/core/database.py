@@ -81,7 +81,8 @@ class Database:
                 entry_date TEXT NOT NULL,
                 exit_price REAL,
                 exit_date TEXT,
-                "open" INTEGER NOT NULL DEFAULT 1
+                "open" INTEGER NOT NULL DEFAULT 1,
+                planned INTEGER NOT NULL DEFAULT 0
             )
         ''')
 
@@ -96,6 +97,10 @@ class Database:
         if 'open' not in existing_columns:
             cursor.execute('ALTER TABLE operations ADD COLUMN "open" INTEGER NOT NULL DEFAULT 1')
             cursor.execute('UPDATE operations SET "open" = 0 WHERE exit_price IS NOT NULL')
+        # planned: the operation is still only a project that may or may not
+        # start (its gains are shown without the green/red colors)
+        if 'planned' not in existing_columns:
+            cursor.execute('ALTER TABLE operations ADD COLUMN planned INTEGER NOT NULL DEFAULT 0')
 
         self.conn.commit()
         
@@ -708,8 +713,8 @@ class Database:
         cursor.execute('''
             INSERT INTO operations
                 (bot, market, paper, asset, side, entry_price, volume, leverage,
-                 entry_date, exit_price, exit_date, "open")
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 entry_date, exit_price, exit_date, "open", planned)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
               1 if op.get('paper') else 0, op.get('asset', ''),
               op.get('side', 'Long'), float(op.get('entry_price') or 0),
@@ -717,7 +722,8 @@ class Database:
               op.get('leverage') or '', op.get('entry_date', ''),
               float(op['exit_price']) if op.get('exit_price') else None,
               op.get('exit_date') or None,
-              1 if op.get('open', True) else 0))
+              1 if op.get('open', True) else 0,
+              1 if op.get('planned') else 0))
         self.conn.commit()
         return cursor.lastrowid
 
@@ -728,7 +734,7 @@ class Database:
             UPDATE operations SET
                 bot = ?, market = ?, paper = ?, asset = ?, side = ?,
                 entry_price = ?, volume = ?, leverage = ?, entry_date = ?,
-                exit_price = ?, exit_date = ?, "open" = ?
+                exit_price = ?, exit_date = ?, "open" = ?, planned = ?
             WHERE id = ?
         ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
               1 if op.get('paper') else 0, op.get('asset', ''),
@@ -737,7 +743,8 @@ class Database:
               op.get('leverage') or '', op.get('entry_date', ''),
               float(op['exit_price']) if op.get('exit_price') else None,
               op.get('exit_date') or None,
-              1 if op.get('open', True) else 0, op_id))
+              1 if op.get('open', True) else 0,
+              1 if op.get('planned') else 0, op_id))
         self.conn.commit()
 
     def delete_operation(self, op_id: int):
@@ -750,9 +757,9 @@ class Database:
         """All trading operations, oldest entry first."""
         cursor = self.conn.cursor()
         cursor.execute('SELECT id, bot, market, paper, asset, side, entry_price, volume, leverage, '
-                       'entry_date, exit_price, exit_date, "open" FROM operations ORDER BY entry_date')
+                       'entry_date, exit_price, exit_date, "open", planned FROM operations ORDER BY entry_date')
         columns = ['id', 'bot', 'market', 'paper', 'asset', 'side', 'entry_price', 'volume',
-                   'leverage', 'entry_date', 'exit_price', 'exit_date', 'open']
+                   'leverage', 'entry_date', 'exit_price', 'exit_date', 'open', 'planned']
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def save_data_source(self, symbol: str, source: str):

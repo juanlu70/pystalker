@@ -826,10 +826,8 @@ class PyStalkerWindow(QMainWindow):
             
             try:
                 # each symbol is served by the provider it was downloaded from
-                if self.database.load_data_source(symbol) == 'phemex':
-                    bar_data = self.data_manager.fetch_phemex(symbol)
-                else:
-                    bar_data = self.data_manager.fetch_yahoo(symbol)
+                bar_data = self.data_manager.fetch_by_source(
+                    self.database.load_data_source(symbol), symbol)
                 if bar_data and bar_data.count() > 0:
                     self.database.save_bars(bar_data)
                     self.assets.add_asset(symbol, bar_data)
@@ -1097,7 +1095,7 @@ class PyStalkerWindow(QMainWindow):
                     tab.chart_view._needs_view_reset = True
 
     # friendly names of the data providers (shown in the rename dialog)
-    DATA_SOURCE_LABELS = {'yahoo': 'Yahoo Finance', 'phemex': 'Phemex'}
+    DATA_SOURCE_LABELS = {'yahoo': 'Yahoo Finance', 'phemex': 'Phemex', 'pionex': 'Pionex'}
 
     def on_rename_graph(self, symbol: str):
         """Rename an asset: the personalized name shown in the program (ticker
