@@ -383,6 +383,9 @@ class ChartView(QWidget):
         self.overlay_lines = []
         self.indicator_curves = []
         self.drawings = []
+        # the title shown in the big graph box: the personalized display
+        # name when the asset has one, the official symbol otherwise
+        self.title_text = None
         self.drawing_trendline = False
         self._drawing_type = 'trendline'
         self._needs_view_reset = False
@@ -1709,6 +1712,12 @@ class ChartView(QWidget):
                 self.plot_candlesticks(self._full_df, self.symbol)
             self.chartStyleChanged.emit(style)
     
+    def set_chart_title(self, text: str):
+        """Set the title shown in the big graph box (the personalized name);
+        plot redraws keep using it until it is changed again."""
+        self.title_text = text
+        self.plot_widget.setTitle(text, color='w', size='14pt')
+
     def plot_candlesticks(self, df: pd.DataFrame, symbol: str):
         self._full_df = df
         self.symbol = symbol
@@ -1787,7 +1796,7 @@ class ChartView(QWidget):
         
         self.update_ohlc_legend()
         
-        self.plot_widget.setTitle(symbol, color='w', size='14pt')
+        self.plot_widget.setTitle(self.title_text or symbol, color='w', size='14pt')
         
         if len(self.overlay_lines) > 0:
             self.plot_widget.addLegend(offset=(10, 30))

@@ -88,15 +88,31 @@ class AssetNavigator(QWidget):
         self.rename_button.clicked.connect(self.on_rename_graph)
         layout.addWidget(self.rename_button)
     
-    def add_asset(self, symbol: str):
+    def add_asset(self, symbol: str, display_name: str = None):
         if symbol not in self.assets:
             self.assets.append(symbol)
-            item = QListWidgetItem(symbol)
+            item = QListWidgetItem(display_name or symbol)
+            # the official symbol keys the item (UserRole); the visible text
+            # can be a personalized display name
+            item.setData(Qt.ItemDataRole.UserRole, symbol)
             self.asset_list.addItem(item)
-    
+
     def get_assets(self) -> list:
         return self.assets
-    
+
+    @staticmethod
+    def _symbol_of(item: QListWidgetItem) -> str:
+        """The official symbol behind a list item (regardless of its text)."""
+        return item.data(Qt.ItemDataRole.UserRole) or item.text()
+
+    def set_asset_display_name(self, symbol: str, display_name: str = None):
+        """Change an item's visible text without touching its symbol."""
+        for i in range(self.asset_list.count()):
+            item = self.asset_list.item(i)
+            if self._symbol_of(item) == symbol:
+                item.setText(display_name or symbol)
+                return
+
     def rename_asset(self, old_symbol: str, new_symbol: str):
         if old_symbol in self.assets:
             idx = self.assets.index(old_symbol)
@@ -104,6 +120,7 @@ class AssetNavigator(QWidget):
             item = self.asset_list.item(idx)
             if item:
                 item.setText(new_symbol)
+                item.setData(Qt.ItemDataRole.UserRole, new_symbol)
     
     def filter_assets(self, pattern: str):
         pattern = pattern.lower()
@@ -115,12 +132,12 @@ class AssetNavigator(QWidget):
                 item.setHidden(False)
     
     def on_item_double_clicked(self, item: QListWidgetItem):
-        self.asset_selected.emit(item.text())
-    
+        self.asset_selected.emit(self._symbol_of(item))
+
     def on_selection_changed(self):
         selected = self.asset_list.selectedItems()
         if selected:
-            self.asset_selected.emit(selected[0].text())
+            self.asset_selected.emit(self._symbol_of(selected[0]))
     
     def on_add_asset(self):
         from PyQt6.QtWidgets import QInputDialog
@@ -135,8 +152,9 @@ class AssetNavigator(QWidget):
         selected = self.asset_list.selectedItems()
         if selected:
             item = selected[0]
-            symbol = item.text()
-            self.assets.remove(symbol)
+            symbol = self._symbol_of(item)
+            if symbol in self.assets:
+                self.assets.remove(symbol)
             self.asset_list.takeItem(self.asset_list.row(item))
             self.asset_removed.emit(symbol)
     
@@ -145,11 +163,12 @@ class AssetNavigator(QWidget):
         if not item:
             return
         menu = QMenu(self)
+        symbol = self._symbol_of(item)
         refresh_action = QAction("Refresh", self)
-        refresh_action.triggered.connect(lambda: self.on_refresh(item.text()))
+        refresh_action.triggered.connect(lambda: self.on_refresh(symbol))
         menu.addAction(refresh_action)
         rename_action = QAction("Rename", self)
-        rename_action.triggered.connect(lambda: self.rename_graph.emit(item.text()))
+        rename_action.triggered.connect(lambda: self.rename_graph.emit(symbol))
         menu.addAction(rename_action)
         remove_action = QAction("Remove", self)
         remove_action.triggered.connect(self.on_remove_asset)
@@ -162,12 +181,12 @@ class AssetNavigator(QWidget):
     def on_copy_graph(self):
         selected = self.asset_list.selectedItems()
         if selected:
-            self.copy_graph.emit(selected[0].text())
+            self.copy_graph.emit(self._symbol_of(selected[0]))
     
     def on_rename_graph(self):
         selected = self.asset_list.selectedItems()
         if selected:
-            self.rename_graph.emit(selected[0].text())
+            self.rename_graph.emit(self._symbol_of(selected[0]))
     
     def add_spread(self, name: str):
         if name not in self.spreads:
