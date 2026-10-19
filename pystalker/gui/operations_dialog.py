@@ -18,6 +18,10 @@ from PyQt6.QtWidgets import (
     QGroupBox, QFormLayout, QDateTimeEdit, QMessageBox
 )
 
+from ..core.operations import (
+    fmt_gain, fmt_pnl, fmt_price, leverage_value, operation_metrics
+)
+
 # Long / winning: green background. Short / losing: red background.
 LONG_COLOR = QColor('#2e7d32')
 SHORT_COLOR = QColor('#c62828')
@@ -31,27 +35,6 @@ BOT_OPTIONS = ['No bot', 'Bot']
 MARKET_OPTIONS = ['Spot', 'Futures']
 SIDE_OPTIONS = ['Long', 'Short']
 LEVERAGE_PRESETS = ['1', '2', '3', '5', '10', '20', '25', '50', '100', 'Combined']
-
-
-def leverage_value(text):
-    """The numeric leverage, or None for 'Combined' or other free text."""
-    try:
-        value = float(str(text).strip())
-        return value if value > 0 else None
-    except (TypeError, ValueError):
-        return None
-
-
-def move_percent(side, entry_price, price):
-    """Directional percent move of the operation: + when winning.
-
-    Long: (price - entry) / entry. Short: (entry - price) / entry.
-    """
-    if not entry_price or not price:
-        return None
-    if side == 'Short':
-        return (entry_price - price) / entry_price * 100
-    return (price - entry_price) / entry_price * 100
 
 
 class OperationFormDialog(QDialog):
@@ -360,8 +343,7 @@ class OperationsDialog(QDialog):
     @staticmethod
     def _fmt_price(value):
         """Plain price text without trailing zeros or scientific notation."""
-        s = f"{value:.8f}".rstrip('0').rstrip('.')
-        return s or '0'
+        return fmt_price(value)
 
     @staticmethod
     def _colored_item(text, color, value=None, bold=True):
@@ -398,29 +380,13 @@ class OperationsDialog(QDialog):
         exit_price = op.get('exit_price')
         current_price = self._current_price(op.get('asset'))
 
-        # directional price move: entry -> current while open, entry -> exit
-        # once closed
-        raw_gain = move_percent(side, entry_price, exit_price if closed else current_price)
-
-        # the leverage multiplies the gain (unknown for 'Combined' or free
-        # text: the raw price move is shown then)
+        # the gain and PNL math is shared with the operations_list.py CLI
+        # tool (pystalker/core/operations.py): the leveraged directional
+        # move - entry -> current while open, entry -> exit once closed -
+        # and the PNL with the exit price whenever there is one (money with
+        # a volume, the leveraged percent without)
+        gain, pnl, pnl_money = operation_metrics(op, current_price)
         lev = leverage_value(op.get('leverage'))
-        gain = raw_gain * lev if (raw_gain is not None and lev) else raw_gain
-
-        # final PNL: computed with the exit price whenever there is one - the
-        # actual result once closed, the potential PNL at the reference exit
-        # price while open (shown plain, without the green/red background);
-        # '-' when there is no exit price
-        pnl = None
-        pnl_money = False
-        if exit_price is not None:
-            raw_at_exit = move_percent(side, entry_price, exit_price)
-            if raw_at_exit is not None:
-                if volume:
-                    pnl = raw_at_exit / 100.0 * volume * (lev or 1.0)
-                    pnl_money = True
-                else:
-                    pnl = raw_at_exit * lev if lev else raw_at_exit
 
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -482,17 +448,18 @@ class OperationsDialog(QDialog):
         else:
             self.table.setItem(row, 8, self._numeric_item('-', None))
 
+        gain_text = fmt_gain(gain)
         if gain is not None:
             if planned:
                 # planned operation: the projected gain keeps the plain look
-                item = self._numeric_item(f"{gain:+.2f}%", gain)
+                item = self._numeric_item(gain_text, gain)
                 item.setToolTip("Planned operation - projected gain, not a real result")
                 self.table.setItem(row, 9, item)
             else:
                 color = LONG_COLOR if gain >= 0 else SHORT_COLOR
-                self.table.setItem(row, 9, self._colored_item(f"{gain:+.2f}%", color, gain))
+                self.table.setItem(row, 9, self._colored_item(gain_text, color, gain))
         else:
-            self.table.setItem(row, 9, self._numeric_item('-', None))
+            self.table.setItem(row, 9, self._numeric_item(gain_text, None))
 
         self.table.setItem(row, 10, QTableWidgetItem(op.get('exit_date') or ''))
         if exit_price is not None:
@@ -501,8 +468,7 @@ class OperationsDialog(QDialog):
             self.table.setItem(row, 11, QTableWidgetItem(''))
 
         if pnl is not None:
-            suffix = '' if pnl_money else '%'
-            text = f"{pnl:+.2f}{suffix}"
+            text = fmt_pnl(pnl, pnl_money)
             if closed and not planned:
                 color = LONG_COLOR if pnl >= 0 else SHORT_COLOR
                 self.table.setItem(row, 12, self._colored_item(text, color, pnl))
