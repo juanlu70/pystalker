@@ -1,5 +1,11 @@
 # CHANGELOG
 
+2026-10-22
+
+- Added the **NET GAIN % column** to the operations listings (user request: "the gain but without the leverage, I mean the GAIN 1x"): a new column right before GAIN % in the **application's Operations list, in `pystalker_cli.py operations` and in the standalone `console_programs/operations_list.py`** - the directional move at 1x (entry -> current while open, entry -> exit once closed), so GAIN % keeps showing the leveraged move and NET GAIN % the pure price move (identical to it when the leverage is 1 or 'Combined'). It follows the GAIN % look everywhere: green/red in the application and with ANSI colors in the terminals, plain (no color) for planned operations, '-' when there is no price to compare against. The FINAL PNL is unchanged (it was already computed from the 1x move).
+  - `operation_metrics()` now returns the 1x move alongside the leveraged one (`gain, net_gain, pnl, pnl_money`) and `list_operations()` exposes it as `net_gain` - the shared core keeps the application and the terminals on identical numbers. The EXIT, EXIT PRICE and FINAL PNL columns shifted one to the right in both listings.
+  - Verified (temp database with the full operation matrix): the math (long/short, 5x/10x leverage, 'Combined', closed basis, no-data rows); the application's column position, values and colors (planned rows plain, real open/closed colored, potential PNL tooltips) with the shifted columns intact and the PAPER/PLANNED toggles unaffected; the CLI output identical through the unified program and the standalone one with the ANSI-stripped colored output equal to the `--no-color` output; clean console.
+
 2026-10-21
 
 - Added **pystalker_cli.py, the unified command-line program** (user request: "a simple CLI program that has commands to make all the already created console programs... so I have a single program to make it all"): one program with a command per tool - `operations` (the trading journal), `update` (update all assets' data, the File > Update All Stock Data twin), `scanner` (the channel scanner) and `list <exchange>` where the second argument is the exchange (`list phemex`, `list pionex`) - exactly the commands the user specified. Every command keeps the flags of its original program, listed with `<command> --help`.
