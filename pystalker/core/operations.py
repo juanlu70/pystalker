@@ -60,11 +60,14 @@ def fmt_pnl(pnl, pnl_money):
 
 
 def operation_metrics(op, current_price=None):
-    """The listed metrics of an operation: (gain, pnl, pnl_money).
+    """The listed metrics of an operation: (gain, net_gain, pnl, pnl_money).
 
     gain: the leveraged directional move - entry -> current price while the
     operation is open, entry -> exit price once it is closed (the raw price
     move when the leverage is not a number, e.g. 'Combined').
+
+    net_gain: the same directional move without the leverage (the 1x gain,
+    the NET GAIN % of the listings).
 
     pnl: computed with the exit price whenever there is one - money
     (pnl_money True) when the invested volume is known, the leveraged
@@ -76,8 +79,8 @@ def operation_metrics(op, current_price=None):
     exit_price = op.get('exit_price')
     lev = leverage_value(op.get('leverage'))
 
-    raw_gain = move_percent(side, entry_price, exit_price if closed else current_price)
-    gain = raw_gain * lev if (raw_gain is not None and lev) else raw_gain
+    net_gain = move_percent(side, entry_price, exit_price if closed else current_price)
+    gain = net_gain * lev if (net_gain is not None and lev) else net_gain
 
     pnl = None
     pnl_money = False
@@ -90,7 +93,7 @@ def operation_metrics(op, current_price=None):
                 pnl_money = True
             else:
                 pnl = raw_at_exit * lev if lev else raw_at_exit
-    return gain, pnl, pnl_money
+    return gain, net_gain, pnl, pnl_money
 
 
 # -- read-only database access (a plain sqlite3 connection) ----------------
@@ -194,7 +197,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
             continue
 
         current_price = last_close(conn, symbol) if symbol is not None else None
-        gain, pnl, pnl_money = operation_metrics(op, current_price)
+        gain, net_gain, pnl, pnl_money = operation_metrics(op, current_price)
         rows.append({
             'entry_date': op.get('entry_date') or '',
             'asset': asset_text,
@@ -208,6 +211,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
             'lev': leverage_value(op.get('leverage')),
             'current_price': current_price,
             'gain': gain,
+            'net_gain': net_gain,
             'pnl': pnl,
             'pnl_money': pnl_money,
             'exit_date': op.get('exit_date') or '',
