@@ -16,21 +16,16 @@ The listing logic (and the gain/PNL math, identical to the application's)
 lives in pystalker/core/operations.py. The database is only read.
 
 Usage:
-  python operations_list.py
-  python operations_list.py --asset BTC
-  python operations_list.py --open
-  python operations_list.py --closed
-  python operations_list.py --planned
-  python operations_list.py --paper
-  python operations_list.py --no-color
-  python operations_list.py --db /path/to/pystalker.db
+  python pystalker_cli.py operations                     (the unified program)
+  python pystalker_cli.py operations --asset BTC --planned
+  python console_programs/operations_list.py --db /path/to/pystalker.db   (standalone)
 """
 import argparse
 import sqlite3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pystalker.core.operations import fmt_gain, fmt_pnl, fmt_price, list_operations
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
@@ -57,9 +52,8 @@ def colored(text, color, enabled=True, bold=False):
     return f"{prefix}{text}{RESET}"
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="List the trading operations (the Operations journal) from the terminal")
+def build_parser(parser):
+    """This tool's flags, shared by the standalone program and pystalker_cli.py."""
     parser.add_argument('--db', default=DB_DEFAULT, help=f"path to the database (default: {DB_DEFAULT})")
     parser.add_argument('--asset', default=None,
                         help="keep only this asset's operations (substring of its stored name, "
@@ -71,7 +65,9 @@ def main():
                         help="only planned operations (projects that may or may not start)")
     parser.add_argument('--paper', action='store_true', help="only paper trading operations")
     parser.add_argument('--no-color', action='store_true', help="plain text without ANSI colors")
-    args = parser.parse_args()
+
+
+def run(args):
 
     if not Path(args.db).exists():
         print(f"Database not found: {args.db}")
@@ -162,6 +158,13 @@ def main():
 
     print(f"\n{len(rows)} operation(s): {result['n_open']} open, "
           f"{result['n_closed']} closed, {result['n_planned']} planned")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="List the trading operations (the Operations journal) from the terminal")
+    build_parser(parser)
+    run(parser.parse_args(argv))
 
 
 if __name__ == '__main__':

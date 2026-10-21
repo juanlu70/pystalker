@@ -32,7 +32,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pystalker.core.providers import PhemexProvider, PHEMEX_CATEGORY_LABELS
 
 TYPE_CHOICES = ('perp', 'tradfi', 'tokenized', 'crypto', 'all')
@@ -47,9 +47,8 @@ CATEGORY_TITLES = {'perp': 'crypto perp futures',
                    'all': 'all products'}
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="List the Phemex assets (symbols usable in pystalker)")
+def build_parser(parser):
+    """This tool's flags, shared by the standalone program and pystalker_cli.py."""
     parser.add_argument('--search', default=None,
                         help="keep only products matching this text (symbol, description or asset name)")
     parser.add_argument('--type', choices=TYPE_CHOICES, default=None,
@@ -61,8 +60,9 @@ def main():
                         help="keep only products quoted in this currency (e.g. USDT)")
     parser.add_argument('--all', action='store_true',
                         help="include delisted products (a STATUS column is added)")
-    args = parser.parse_args()
 
+
+def run(args):
     provider = PhemexProvider()
     try:
         products = provider.get_products()
@@ -135,6 +135,13 @@ def main():
         counts[CATEGORY_LABELS[category]] = counts.get(CATEGORY_LABELS[category], 0) + 1
     breakdown = ", ".join(f"{n} {c.lower()}" for c, n in counts.items())
     print(f"\n{len(rows)} product(s): {breakdown}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="List the Phemex assets (symbols usable in pystalker)")
+    build_parser(parser)
+    run(parser.parse_args(argv))
 
 
 if __name__ == '__main__':

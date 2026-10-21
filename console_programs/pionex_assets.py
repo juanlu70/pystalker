@@ -27,7 +27,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pystalker.core.providers import PionexProvider
 
 TYPE_CHOICES = ('all', 'spot', 'perp')
@@ -40,17 +40,17 @@ def _is_enabled(product: dict) -> bool:
     return product.get('status') == 'TRADING'
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="List all Pionex assets (symbols usable in pystalker)")
+def build_parser(parser):
+    """This tool's flags, shared by the standalone program and pystalker_cli.py."""
     parser.add_argument('--search', default=None,
                         help="keep only products matching this text (symbol, base or quote)")
     parser.add_argument('--type', choices=TYPE_CHOICES, default='all',
                         help="spot: only spot pairs | perp: only perpetual futures | all (default)")
     parser.add_argument('--all', action='store_true',
                         help="include disabled products (a STATUS column is added)")
-    args = parser.parse_args()
 
+
+def run(args):
     try:
         products = PionexProvider().get_symbols()
     except Exception as e:
@@ -112,6 +112,13 @@ def main():
     spot_count = sum(1 for r in rows if r[1] == 'SPOT')
     perp_count = sum(1 for r in rows if r[1] == 'PERP')
     print(f"\n{len(rows)} product(s): {spot_count} spot, {perp_count} perpetual")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="List all Pionex assets (symbols usable in pystalker)")
+    build_parser(parser)
+    run(parser.parse_args(argv))
 
 
 if __name__ == '__main__':

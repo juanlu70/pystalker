@@ -37,8 +37,8 @@ Now the project is a MVP, can get daily data and I added some new improvements l
 - Stacked technical indicators: MACD, RSI, CCI, ADX, ATR, Momentum, ROC, Stochastic, Stochastic RSI, WILLR, OBV, MFI.
 - Drawings: Trendlines, Horizontal lines, Vertical lines, Ascending and Descending Channels (drawn manually or detected automatically), future support for fibonacci drawings.
 - Types of graphs: Lines, candles, Heikin Ashi, future support for open candles.
-- Tools: channel_scanner.py, to discover assets whose price is near a drawn channel line; phemex_assets.py, to list the Phemex perp futures and tokenized assets and their symbols; pionex_assets.py, to list the Pionex spot pairs and perpetual futures and their symbols; operations_list.py, to list the trading operations journal from the terminal.
-- Trading journal: Operations (Trading -> Operations) to annotate and list trading operations (bots, spots/futures, paper trading, planned projects that may or may not start) with their volume, current price, percent gain and final PNL (money when the invested volume is known); planned operations keep the plain gain/PNL look (no green/red) until they really start; each operation draws its entry line (bright green for longs, bright red for shorts) and its exit line (bright blue) on the asset's chart. The same journal is listed from the terminal with `operations_list.py` - the same columns and numbers, ANSI green/red colors (planned operations stay plain) and filters (`--asset`, `--open`/`--closed`, `--planned`, `--paper`).
+- Tools: pystalker_cli.py, the unified command-line program - one program, one command per tool: `operations` (the trading journal), `update` (update all assets' data, the File > Update All Stock Data twin), `scanner` (assets whose price is near a drawn channel line) and `list phemex` / `list pionex` (the exchange product listings). Every command keeps the flags of its original program; the standalone versions live in console_programs/.
+- Trading journal: Operations (Trading -> Operations) to annotate and list trading operations (bots, spots/futures, paper trading, planned projects that may or may not start) with their volume, current price, percent gain and final PNL (money when the invested volume is known); planned operations keep the plain gain/PNL look (no green/red) until they really start; each operation draws its entry line (bright green for longs, bright red for shorts) and its exit line (bright blue) on the asset's chart. The same journal is listed from the terminal with `python pystalker_cli.py operations` - the same columns and numbers, ANSI green/red colors (planned operations stay plain) and filters (`--asset`, `--open`/`--closed`, `--planned`, `--paper`).
 - Assets have an official ticker for the data provider and a personalized display name (lower case allowed) shown in the ticker list, chart tabs and Operations, so renamed assets keep updating from the right source.
 
 
@@ -69,12 +69,12 @@ Full quality video: [automatic_channel.mp4](automatic_channel.mp4)
 
 # Discovering assets near the channel limits
 
-The channels become much more useful when you can watch them all at once. `channel_scanner.py` is an independent tool that scans every asset in the pystalker database, discards the ones without drawn channels, and reports which assets have their price near a channel line - by default inside the channel and within 10% of the lower or upper line - showing the ticker, whether the channel is ascending or descending, which line the price is near, and the proximity percentage. It also notifies you when the current price has broken a channel, so you know that channel is invalidated and you can draw a new one.
+The channels become much more useful when you can watch them all at once. The channel scanner (`python pystalker_cli.py scanner`) is an independent tool that scans every asset in the pystalker database, discards the ones without drawn channels, and reports which assets have their price near a channel line - by default inside the channel and within 10% of the lower or upper line - showing the ticker, whether the channel is ascending or descending, which line the price is near, and the proximity percentage. It also notifies you when the current price has broken a channel, so you know that channel is invalidated and you can draw a new one.
 
 ```
-python channel_scanner.py
-python channel_scanner.py --max-proximity 5
-python channel_scanner.py --symbol BTC-USD
+python pystalker_cli.py scanner
+python pystalker_cli.py scanner --max-proximity 5
+python pystalker_cli.py scanner --symbol BTC-USD
 ```
 
 Example output (report date and time are always printed first, trimmed here):
@@ -107,24 +107,24 @@ You type the symbol in the normal Download flow and the program tries Yahoo Fina
 
 Since the Phemex symbol names are technical (the `s` prefix is their spot convention, `sTSLAONUSDT` is TSLAON/USDT), **File -> Download Phemex Symbol...** opens a searchable list of every listed Phemex product (spot pairs, crypto perp futures and TradFi/tokenized perps - search "Tesla", "gold", "BTC"... by asset name and double-click to download).
 
-From the console, `phemex_assets.py` lists the Phemex assets with the exact symbols the Download flow accepts. By default it shows the **perp futures and the tokenized assets**: the crypto perp futures (BTCUSDT, BTCUSD...), the TradFi perp futures on tokenized stocks/indices/commodities (TSLAUSDT, NAS100USDT, XAUUSDT, SPACEXUSDT, OPENAIUSDT...) and the spot tokenized assets (the Ondo tokenized stocks and ETFs: Tesla, Apple, NVIDIA, Microsoft, SPY, QQQ, gold and silver trusts..., plus the xStocks series like SpaceX):
+From the console, `python pystalker_cli.py list phemex` lists the Phemex assets with the exact symbols the Download flow accepts. By default it shows the **perp futures and the tokenized assets**: the crypto perp futures (BTCUSDT, BTCUSD...), the TradFi perp futures on tokenized stocks/indices/commodities (TSLAUSDT, NAS100USDT, XAUUSDT, SPACEXUSDT, OPENAIUSDT...) and the spot tokenized assets (the Ondo tokenized stocks and ETFs: Tesla, Apple, NVIDIA, Microsoft, SPY, QQQ, gold and silver trusts..., plus the xStocks series like SpaceX):
 
 ```
-python phemex_assets.py
-python phemex_assets.py --search Tesla
-python phemex_assets.py --type tradfi     # only the tokenized asset perps
-python phemex_assets.py --type crypto      # the normal crypto spot pairs
-python phemex_assets.py --type all
+python pystalker_cli.py list phemex
+python pystalker_cli.py list phemex --search Tesla
+python pystalker_cli.py list phemex --type tradfi     # only the tokenized asset perps
+python pystalker_cli.py list phemex --type crypto      # the normal crypto spot pairs
+python pystalker_cli.py list phemex --type all
 ```
 
-For Pionex, `pionex_assets.py` lists all its products (940: the spot pairs and the perpetual futures, with a NAME column for the perpetuals) with the exact symbols the Download flow accepts:
+For Pionex, `python pystalker_cli.py list pionex` lists all its products (940: the spot pairs and the perpetual futures, with a NAME column for the perpetuals) with the exact symbols the Download flow accepts:
 
 ```
-python pionex_assets.py
-python pionex_assets.py --search BTC
-python pionex_assets.py --type spot        # only the spot pairs
-python pionex_assets.py --type perp         # only the perpetual futures
-python pionex_assets.py --all               # include the disabled products
+python pystalker_cli.py list pionex
+python pystalker_cli.py list pionex --search BTC
+python pystalker_cli.py list pionex --type spot        # only the spot pairs
+python pystalker_cli.py list pionex --type perp         # only the perpetual futures
+python pystalker_cli.py list pionex --all               # include the disabled products
 ```
 
 
