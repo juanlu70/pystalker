@@ -22,30 +22,30 @@ The scanning logic lives in pystalker/core/channel_scanner.py and is shared
 with the Trading menu inside the application.
 
 Usage:
-  python channel_scanner.py
-  python channel_scanner.py --max-proximity 5
-  python channel_scanner.py --symbol BTC-USD
-  python channel_scanner.py --db /path/to/pystalker.db
+  python pystalker_cli.py scanner                       (the unified program)
+  python pystalker_cli.py scanner --max-proximity 5 --symbol BTC-USD
+  python console_programs/channel_scanner.py --db /path/to/pystalker.db   (standalone)
 """
 import argparse
 import sqlite3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pystalker.core.channel_scanner import scan_channel_proximity
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Find assets whose price is near a drawn channel line (<= max proximity)")
+def build_parser(parser):
+    """This tool's flags, shared by the standalone program and pystalker_cli.py."""
     parser.add_argument('--db', default=DB_DEFAULT, help=f"path to the database (default: {DB_DEFAULT})")
     parser.add_argument('--max-proximity', type=float, default=10.0,
                         help="maximum proximity percentage to report (default: 10)")
     parser.add_argument('--symbol', default=None, help="scan a single asset instead of all")
-    args = parser.parse_args()
+
+
+def run(args):
 
     if not Path(args.db).exists():
         print(f"Database not found: {args.db}")
@@ -89,6 +89,13 @@ def main():
         print("\nSkipped:")
         for s in skipped:
             print(f"  {s}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Find assets whose price is near a drawn channel line (<= max proximity)")
+    build_parser(parser)
+    run(parser.parse_args(argv))
 
 
 if __name__ == '__main__':
