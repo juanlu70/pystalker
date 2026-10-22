@@ -69,12 +69,13 @@ Full quality video: [automatic_channel.mp4](automatic_channel.mp4)
 
 # Discovering assets near the channel limits
 
-The channels become much more useful when you can watch them all at once. The channel scanner (`python pystalker_cli.py scanner`) is an independent tool that scans every asset in the pystalker database, discards the ones without drawn channels, and reports which assets have their price near a channel line - by default inside the channel and within 10% of the lower or upper line - showing the ticker, whether the channel is ascending or descending, which line the price is near, and the proximity percentage. It also notifies you when the current price has broken a channel, so you know that channel is invalidated and you can draw a new one.
+The channels become much more useful when you can watch them all at once. The channel scanner (`python pystalker_cli.py scanner`) is an independent tool that scans every asset in the pystalker database, discards the ones without drawn channels, and reports which assets have their price near a channel line - by default inside the channel and within 10% of the lower or upper line - showing the ticker, whether the channel is ascending or descending, which line the price is near, and the proximity percentage. It also notifies you when the current price has broken a channel, so you know that channel is invalidated and you can draw a new one. The CHANNEL column shows Ascending in green and Descending in red letters, and the NEAR LINE column shows Upper in green and Lower in red; the broken-channels notifications use the same color coding (Ascending channel in green, Descending channel in red, "beyond the upper line" in green, "beyond the lower line" in red). `--no-color` prints plain text, and with `--lower-than <price>` the whole report keeps only the assets whose last price is at that price or lower (e.g. `--lower-than 15`).
 
 ```
 python pystalker_cli.py scanner
 python pystalker_cli.py scanner --max-proximity 5
 python pystalker_cli.py scanner --symbol BTC-USD
+python pystalker_cli.py scanner --lower-than 15    # only assets at $15 or lower
 ```
 
 Example output (report date and time are always printed first, trimmed here):
