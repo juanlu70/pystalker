@@ -2327,10 +2327,10 @@ class ChartView(QWidget):
         self.restore_drawings(snapshot)
         return True
     
-    def add_operation_hline(self, price, color, op_id, op_kind):
-        """Add an operation-owned horizontal line (entry or exit) as a normal
-        hline drawing, tagged in params so operation edits/deletes can find
-        and replace it."""
+    def add_tagged_hline(self, price, color, params):
+        """Add a horizontal line as a normal (draggable) hline drawing, tagged
+        in params so its owner (an operation's entry/exit lines, the channel
+        scanner's indicator lines...) can find and replace it later."""
         x_min = -10
         x_max = len(self.df) + 10 if self.df is not None else 1000
         item = HLineItem(price, x_min, x_max, color, 1)
@@ -2342,19 +2342,20 @@ class ChartView(QWidget):
             'points': [(0, price)],
             'color': color,
             'snap': '',
-            'params': {'operation_id': op_id, 'op_kind': op_kind},
+            'params': dict(params),
             'width': 1
         })
         self._update_hline_labels()
         self.plot_widget.update()
 
-    def remove_operation_hlines(self, op_id):
-        """Remove an operation's entry/exit lines (identified by the
-        operation_id tag in params). Returns True if any was removed."""
+    def remove_tagged_hlines(self, key, value):
+        """Remove the hline drawings whose params match key=value (an
+        operation's id, the channel scanner's tag...). Returns True if any
+        was removed."""
         removed = False
         for drawing in list(self.drawings):
             params = drawing.get('params') or {}
-            if drawing.get('type') == 'hline' and params.get('operation_id') == op_id:
+            if drawing.get('type') == 'hline' and params.get(key) == value:
                 item = drawing.get('item')
                 if item is not None:
                     if hasattr(item, 'label'):
@@ -2366,6 +2367,17 @@ class ChartView(QWidget):
             self._update_hline_labels()
             self.plot_widget.update()
         return removed
+
+    def add_operation_hline(self, price, color, op_id, op_kind):
+        """Add an operation-owned horizontal line (entry or exit) as a normal
+        hline drawing, tagged in params so operation edits/deletes can find
+        and replace it."""
+        self.add_tagged_hline(price, color, {'operation_id': op_id, 'op_kind': op_kind})
+
+    def remove_operation_hlines(self, op_id):
+        """Remove an operation's entry/exit lines (identified by the
+        operation_id tag in params). Returns True if any was removed."""
+        return self.remove_tagged_hlines('operation_id', op_id)
 
     def get_drawings(self):
         result = []

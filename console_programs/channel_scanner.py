@@ -77,18 +77,14 @@ def run(args):
         sys.exit(1)
 
     conn = sqlite3.connect(args.db)
-    res = scan_channel_proximity(conn, max_proximity=args.max_proximity, symbol=args.symbol)
+    res = scan_channel_proximity(conn, max_proximity=args.max_proximity, symbol=args.symbol,
+                                  lower_than=args.lower_than)
     conn.close()
 
     near_results = res['near']
     broken_results = res['broken']
     skipped = res['skipped']
     scanned = res['scanned']
-
-    # --lower-than: keep only the cheap assets, in the whole report
-    if args.lower_than is not None:
-        near_results = [r for r in near_results if r[2] <= args.lower_than]
-        broken_results = [r for r in broken_results if r[2] <= args.lower_than]
 
     use_color = not args.no_color
     price_filter = f" - price <= {args.lower_than:g}" if args.lower_than is not None else ""

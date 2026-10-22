@@ -139,8 +139,14 @@ def evaluate_channel(channel, price: float, n_bars: int) -> Optional[Dict]:
 
 
 def scan_channel_proximity(conn, max_proximity: float = 10.0,
-                           symbol: Optional[str] = None) -> Dict:
+                           symbol: Optional[str] = None,
+                           lower_than: Optional[float] = None) -> Dict:
     """Scan all assets for channels near the price.
+
+    lower_than keeps only the assets whose last close is at that price or
+    lower (None = all prices), in both the near and the broken sections -
+    the --lower-than flag of the console scanner and the 'Lower than'
+    input of the application's dialog.
 
     Returns a dict:
       generated   report datetime (local time)
@@ -176,6 +182,11 @@ def scan_channel_proximity(conn, max_proximity: float = 10.0,
                     results['near'].append((sym, ev, price))
             else:
                 results['broken'].append((sym, ev, price))
+
+    # --lower-than: keep only the cheap assets, in both sections
+    if lower_than is not None:
+        results['near'] = [r for r in results['near'] if r[2] <= lower_than]
+        results['broken'] = [r for r in results['broken'] if r[2] <= lower_than]
 
     results['near'].sort(key=lambda r: r[1]['proximity'])
     results['broken'].sort(key=lambda r: (r[0], r[1]['broken_line']))
