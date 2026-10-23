@@ -3,7 +3,7 @@ PyStalker - Operations core
 
 The shared logic of the trading journal (Trading > Operations):
 
-* the gain / PNL math (used by the in-application list and by the standalone
+* the gain math (used by the in-application list and by the standalone
   operations_list.py CLI tool, so both always show the same numbers),
 * read-only database accessors for the CLI (a plain sqlite3 connection,
   the channel_scanner precedent: no writes, no migrations, safe on the
@@ -47,20 +47,13 @@ def fmt_price(value):
 
 
 def fmt_gain(gain):
-    """The GAIN % cell text ('+' signed percent, '-' when there is none)."""
+    """The gain cell text ('+' signed percent, '-' when there is none) - used
+    by GAIN %, NET GAIN % and FINAL GAIN %."""
     return f"{gain:+.2f}%" if gain is not None else '-'
 
 
-def fmt_pnl(pnl, pnl_money):
-    """The FINAL PNL cell text: money when the volume is known (no suffix),
-    the leveraged percent otherwise; '-' when there is no exit price."""
-    if pnl is None:
-        return '-'
-    return f"{pnl:+.2f}" if pnl_money else f"{pnl:+.2f}%"
-
-
 def operation_metrics(op, current_price=None):
-    """The listed metrics of an operation: (gain, net_gain, pnl, pnl_money).
+    """The listed metrics of an operation: (gain, net_gain, final_gain).
 
     gain: the leveraged directional move - entry -> current price while the
     operation is open, entry -> exit price once it is closed (the raw price
@@ -69,9 +62,10 @@ def operation_metrics(op, current_price=None):
     net_gain: the same directional move without the leverage (the 1x gain,
     the NET GAIN % of the listings).
 
-    pnl: computed with the exit price whenever there is one - money
-    (pnl_money True) when the invested volume is known, the leveraged
-    percent otherwise; None when there is no exit price.
+    final_gain: the FINAL GAIN % - the leveraged gain entry -> exit price
+    whenever there is one (the actual result once closed, the projection at
+    the reference exit price while open; identical to gain for closed
+    operations); None when there is no exit price.
     """
     closed = not bool(op.get('open', 1))
     side = op.get('side') or 'Long'
@@ -82,18 +76,12 @@ def operation_metrics(op, current_price=None):
     net_gain = move_percent(side, entry_price, exit_price if closed else current_price)
     gain = net_gain * lev if (net_gain is not None and lev) else net_gain
 
-    pnl = None
-    pnl_money = False
+    final_gain = None
     if exit_price is not None:
         raw_at_exit = move_percent(side, entry_price, exit_price)
         if raw_at_exit is not None:
-            volume = op.get('volume')
-            if volume:
-                pnl = raw_at_exit / 100.0 * volume * (lev or 1.0)
-                pnl_money = True
-            else:
-                pnl = raw_at_exit * lev if lev else raw_at_exit
-    return gain, net_gain, pnl, pnl_money
+            final_gain = raw_at_exit * lev if lev else raw_at_exit
+    return gain, net_gain, final_gain
 
 
 # -- read-only database access (a plain sqlite3 connection) ----------------
@@ -168,7 +156,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
       entry_date, asset (the text to display: the personalized name when the
       asset is in the database), symbol (the resolved official symbol, or None),
       paper, planned, side, entry_price, volume, leverage (text), lev (numeric),
-      current_price, gain, pnl, pnl_money, exit_date, exit_price, open
+      current_price, gain, net_gain, final_gain, exit_date, exit_price, open
     plus the summary counts of the listed rows: n_open, n_closed, n_planned.
     Rows are sorted newest entry first (like the application's list).
     """
@@ -197,7 +185,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
             continue
 
         current_price = last_close(conn, symbol) if symbol is not None else None
-        gain, net_gain, pnl, pnl_money = operation_metrics(op, current_price)
+        gain, net_gain, final_gain = operation_metrics(op, current_price)
         rows.append({
             'entry_date': op.get('entry_date') or '',
             'asset': asset_text,
@@ -212,8 +200,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
             'current_price': current_price,
             'gain': gain,
             'net_gain': net_gain,
-            'pnl': pnl,
-            'pnl_money': pnl_money,
+            'final_gain': final_gain,
             'exit_date': op.get('exit_date') or '',
             'exit_price': op.get('exit_price'),
             'open': bool(op.get('open', 1)),

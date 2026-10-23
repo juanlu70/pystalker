@@ -8,7 +8,7 @@ Every command keeps the flags of its original program:
 
   operations   The trading journal (the Trading -> Operations list):
                the operations with their gains (green/red like the
-               application, plain for planned projects), PNL and filters.
+               application, plain for planned projects) and filters.
     --db --asset --open/--closed --planned --paper --no-color
 
   update       Update all assets' data (the File > Update All Stock Data
