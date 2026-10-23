@@ -6,7 +6,9 @@ paper or real, planned or already started) and list the current and past
 ones with their live state - the current price from the program's data,
 the directional percent gain without leverage (NET GAIN %, the 1x move),
 the leveraged gain (GAIN %) and the FINAL GAIN % (the leveraged gain at
-the exit price). Planned operations are still only a project that
+the exit price). The list is grouped in three tabs: Open (running, not
+planned), Planned (all the planned projects) and Closed (done, not
+planned). Planned operations are still only a project that
 may or may not start: they keep a plain gain look (no green/red).
 Double-click a row (or Edit) to fix mistakes, Delete removes a record.
 The operations are stored in the `operations` table of the database.
@@ -16,11 +18,11 @@ from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QCheckBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QGroupBox, QFormLayout, QDateTimeEdit, QMessageBox
+    QGroupBox, QFormLayout, QDateTimeEdit, QMessageBox, QTabBar
 )
 
 from ..core.operations import (
-    fmt_gain, fmt_price, leverage_value, operation_metrics
+    fmt_gain, fmt_price, leverage_value, operation_group, operation_metrics
 )
 
 # Long / winning: green background. Short / losing: red background.
@@ -248,8 +250,10 @@ class NumericItem(QTableWidgetItem):
 
 
 class OperationsDialog(QDialog):
-    """The main Trading > Operations window: the list of operations."""
+    """The main Trading > Operations window: the list of operations grouped
+    in the Open / Planned / Closed tabs."""
 
+    GROUPS = ('open', 'planned', 'closed')
     COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'VOLUME',
                'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE',
                'FINAL GAIN %']
@@ -280,6 +284,19 @@ class OperationsDialog(QDialog):
         controls.addWidget(refresh_button)
         layout.addLayout(controls)
 
+        # the three groups as tabs - the Open / Planned / Closed groups (a
+        # planned operation lives in the Planned tab whatever its open/closed
+        # state); switching tabs re-filters the list
+        self.group_tabs = QTabBar()
+        self.group_tabs.addTab("Open")
+        self.group_tabs.addTab("Planned")
+        self.group_tabs.addTab("Closed")
+        self.group_tabs.setTabToolTip(0, "Operations running and not planned")
+        self.group_tabs.setTabToolTip(
+            1, "All the planned operations (projects, open or closed)")
+        self.group_tabs.setTabToolTip(2, "Operations already closed")
+        layout.addWidget(self.group_tabs)
+
         self.table = QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -294,6 +311,7 @@ class OperationsDialog(QDialog):
         self.table.itemDoubleClicked.connect(self.on_edit_operation)
         self.table.cellClicked.connect(self.on_cell_clicked)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.group_tabs.currentChanged.connect(self.refresh)
         layout.addWidget(self.table)
 
         self.summary_label = QLabel("")
@@ -501,22 +519,27 @@ class OperationsDialog(QDialog):
             self.table.setItem(row, 13, self._numeric_item('-', None))
 
     def refresh(self):
-        """Reload the list from the database (entry date, newest first)."""
+        """Reload the list from the database into the current group tab
+        (entry date, newest first); the tabs show the group counts."""
         operations = self._main_window.database.load_operations()
+        groups = {name: [] for name in self.GROUPS}
+        for op in operations:
+            groups[operation_group(op)].append(op)
+        for index, name in enumerate(self.GROUPS):
+            self.group_tabs.setTabText(index, f"{name.capitalize()} ({len(groups[name])})")
+
         self._updating = True
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
-        for op in operations:
+        for op in groups[self.GROUPS[self.group_tabs.currentIndex()]]:
             self._add_row(op)
         self.table.setSortingEnabled(True)
         self._updating = False
         self.table.sortItems(0, Qt.SortOrder.DescendingOrder)
 
-        open_count = sum(1 for op in operations if bool(op.get('open', 1)))
-        planned_count = sum(1 for op in operations if bool(op.get('planned')))
         self.summary_label.setText(
-            f"{len(operations)} operation(s): {open_count} open, "
-            f"{len(operations) - open_count} closed, {planned_count} planned")
+            f"{len(operations)} operation(s): {len(groups['open'])} open, "
+            f"{len(groups['planned'])} planned, {len(groups['closed'])} closed")
 
     def _on_item_changed(self, item):
         """Persist the paper/planned checkboxes toggled directly in the list."""

@@ -52,6 +52,17 @@ def fmt_gain(gain):
     return f"{gain:+.2f}%" if gain is not None else '-'
 
 
+def operation_group(op) -> str:
+    """The mutually exclusive group of an operation for the listings:
+    'planned' (still only a project, whatever its open/closed state),
+    'open' (running and not planned) or 'closed' (done and not planned)."""
+    if op.get('planned'):
+        return 'planned'
+    if bool(op.get('open', 1)):
+        return 'open'
+    return 'closed'
+
+
 def operation_metrics(op, current_price=None):
     """The listed metrics of an operation: (gain, net_gain, final_gain).
 
@@ -141,23 +152,26 @@ def load_operations(conn) -> list:
     return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
-def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> dict:
+def list_operations(conn, asset=None, group=None, paper=None) -> dict:
     """The operations listing (the Trading > Operations list) for the CLI.
 
     Filters (None = keep everything):
       asset    keep only this asset's operations (case-insensitive substring
                against the stored name, the official symbol and the display name)
-      status   'open' or 'closed'
+      group    'open' (running, not planned), 'planned' (all the planned
+               operations) or 'closed' (done, not planned) - the mutually
+               exclusive groups of the listings
       paper    True: only paper trading / False: only real money
-      planned  True: only planned operations / False: only started ones
 
     Returns {'generated': local datetime, 'rows': [...], 'total': N} where
     total counts the operations before the filters and each row is a dict:
       entry_date, asset (the text to display: the personalized name when the
       asset is in the database), symbol (the resolved official symbol, or None),
       paper, planned, side, entry_price, volume, leverage (text), lev (numeric),
-      current_price, gain, net_gain, final_gain, exit_date, exit_price, open
-    plus the summary counts of the listed rows: n_open, n_closed, n_planned.
+      current_price, gain, net_gain, final_gain, exit_date, exit_price, open,
+      group (the row's group: 'open' / 'planned' / 'closed')
+    plus the group counts of the listed rows (n_open + n_planned + n_closed
+    = len(rows)): n_open, n_closed, n_planned.
     Rows are sorted newest entry first (like the application's list).
     """
     operations = load_operations(conn)
@@ -175,13 +189,10 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
                          get_display_name(conn, symbol) or '' if symbol else '')
             if not any(needle in h.lower() for h in haystacks):
                 continue
-        if status == 'open' and not bool(op.get('open', 1)):
-            continue
-        if status == 'closed' and bool(op.get('open', 1)):
+        op_group = operation_group(op)
+        if group is not None and op_group != group:
             continue
         if paper is not None and bool(op.get('paper')) != bool(paper):
-            continue
-        if planned is not None and bool(op.get('planned')) != bool(planned):
             continue
 
         current_price = last_close(conn, symbol) if symbol is not None else None
@@ -204,6 +215,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
             'exit_date': op.get('exit_date') or '',
             'exit_price': op.get('exit_price'),
             'open': bool(op.get('open', 1)),
+            'group': op_group,
         })
     rows.sort(key=lambda r: r['entry_date'], reverse=True)
 
@@ -211,7 +223,7 @@ def list_operations(conn, asset=None, status=None, paper=None, planned=None) -> 
         'generated': datetime.now().astimezone(),
         'rows': rows,
         'total': len(operations),
-        'n_open': sum(1 for r in rows if r['open']),
-        'n_closed': sum(1 for r in rows if not r['open']),
-        'n_planned': sum(1 for r in rows if r['planned']),
+        'n_open': sum(1 for r in rows if r['group'] == 'open'),
+        'n_closed': sum(1 for r in rows if r['group'] == 'closed'),
+        'n_planned': sum(1 for r in rows if r['group'] == 'planned'),
     }
