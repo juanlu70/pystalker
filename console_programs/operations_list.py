@@ -9,11 +9,12 @@ volume, leverage, the current price (the last close stored in the
 database), the NET GAIN % (the directional move without the leverage, the
 1x gain) and the leveraged GAIN % (green/red like the application, plain
 for planned operations whose gains are not real yet), the exit, the exit
-price and the FINAL PNL (money when the invested volume is known, the
-leveraged percent otherwise - colored for real closed operations, plain
-for the potential PNL of open ones and the projected PNL of planned ones).
+price and the FINAL GAIN % (the leveraged gain at the exit price -
+identical to GAIN % for closed operations, the projection at the
+reference exit price while open; colored for real closed operations, plain
+for the potential gain of open ones and the projected gain of planned ones).
 
-The listing logic (and the gain/PNL math, identical to the application's)
+The listing logic (and the gain math, identical to the application's)
 lives in pystalker/core/operations.py. The database is only read.
 
 Usage:
@@ -27,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pystalker.core.operations import fmt_gain, fmt_pnl, fmt_price, list_operations
+from pystalker.core.operations import fmt_gain, fmt_price, list_operations
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
 
@@ -37,7 +38,8 @@ BOLD = '\033[1m'
 RESET = '\033[0m'
 
 COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'VOLUME',
-           'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE', 'FINAL PNL']
+           'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE',
+           'FINAL GAIN %']
 
 
 def gain_color(value):
@@ -132,7 +134,7 @@ def run(args):
             fmt_gain(r['gain']),
             r['exit_date'] or '',
             fmt_price(r['exit_price']) if r['exit_price'] is not None else '',
-            fmt_pnl(r['pnl'], r['pnl_money']),
+            fmt_gain(r['final_gain']),
         ))
 
     widths = [max(len(COLUMNS[i]), max((len(row[i]) for row in plain_rows), default=0))
@@ -155,10 +157,11 @@ def run(args):
             cells[9] = colored(cells[9], gain_color(r['net_gain']), use_color, bold=True)
         if r['gain'] is not None and not r['planned']:
             cells[10] = colored(cells[10], gain_color(r['gain']), use_color, bold=True)
-        # FINAL PNL: colored for real closed operations; plain for the
-        # potential PNL of open ones and the projected PNL of planned ones
-        if r['pnl'] is not None and not r['open'] and not r['planned']:
-            cells[13] = colored(cells[13], gain_color(r['pnl']), use_color, bold=True)
+        # FINAL GAIN %: colored for real closed operations (the leveraged
+        # gain at the exit price, identical to GAIN % there); plain for the
+        # potential gain of open ones and the projected gain of planned ones
+        if r['final_gain'] is not None and not r['open'] and not r['planned']:
+            cells[13] = colored(cells[13], gain_color(r['final_gain']), use_color, bold=True)
         print('  '.join(cells))
 
     print(f"\n{len(rows)} operation(s): {result['n_open']} open, "

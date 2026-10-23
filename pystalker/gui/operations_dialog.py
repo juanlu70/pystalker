@@ -4,10 +4,10 @@ PyStalker - Operations dialog (Trading > Operations)
 A trading journal: annotate operations (bot or manual, spot or futures,
 paper or real, planned or already started) and list the current and past
 ones with their live state - the current price from the program's data,
-the directional percent gain without leverage (NET GAIN %, the 1x move)
-and leveraged (GAIN %), and the final PNL (percent x leverage
-for closed operations). Planned operations are still only a project that
-may or may not start: they keep a plain gain/PNL look (no green/red).
+the directional percent gain without leverage (NET GAIN %, the 1x move),
+the leveraged gain (GAIN %) and the FINAL GAIN % (the leveraged gain at
+the exit price). Planned operations are still only a project that
+may or may not start: they keep a plain gain look (no green/red).
 Double-click a row (or Edit) to fix mistakes, Delete removes a record.
 The operations are stored in the `operations` table of the database.
 """
@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.operations import (
-    fmt_gain, fmt_pnl, fmt_price, leverage_value, operation_metrics
+    fmt_gain, fmt_price, leverage_value, operation_metrics
 )
 
 # Long / winning: green background. Short / losing: red background.
@@ -67,7 +67,7 @@ class OperationFormDialog(QDialog):
         self.planned_check = QCheckBox("Planned (a project that may or may not start)")
         self.planned_check.setToolTip(
             "The operation has not started yet - it is still only a project\n"
-            "that may start soon or never. Its gain and PNL are shown with\n"
+            "that may start soon or never. Its gains are shown with\n"
             "the plain look (no green/red) because there are no real gains yet.\n"
             "Uncheck it (here or in the list) when the operation actually starts.")
         form.addRow("", self.planned_check)
@@ -87,9 +87,9 @@ class OperationFormDialog(QDialog):
         self.volume_edit = QLineEdit()
         self.volume_edit.setPlaceholderText("e.g. 2500 (optional)")
         self.volume_edit.setToolTip(
-            "The invested amount in the quote currency (usually USDT).\n"
-            "Margin for futures - the final PNL multiplies it by the leverage;\n"
-            "the full position value for spot or 'Combined' leverage.")
+            "The invested amount in the quote currency (usually USDT),\n"
+            "informational: the margin for futures, the full position value\n"
+            "for spot or 'Combined' leverage.")
         form.addRow("Volume:", self.volume_edit)
 
         self.leverage_combo = QComboBox()
@@ -251,7 +251,8 @@ class OperationsDialog(QDialog):
     """The main Trading > Operations window: the list of operations."""
 
     COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'VOLUME',
-               'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE', 'FINAL PNL']
+               'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE',
+               'FINAL GAIN %']
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -371,7 +372,7 @@ class OperationsDialog(QDialog):
         # the closed state is the explicit "open" flag; the exit price can
         # exist as a reference while the operation still runs. A planned
         # operation is still only a project that may or may not start: its
-        # gain and PNL keep the plain look (no green/red) because there are
+        # gains keep the plain look (no green/red) because there are
         # no real gains yet
         closed = not bool(op.get('open', 1))
         planned = bool(op.get('planned'))
@@ -381,12 +382,12 @@ class OperationsDialog(QDialog):
         exit_price = op.get('exit_price')
         current_price = self._current_price(op.get('asset'))
 
-        # the gain and PNL math is shared with the operations_list.py CLI
+        # the gain math is shared with the operations_list.py CLI
         # tool (pystalker/core/operations.py): the leveraged directional
         # move - entry -> current while open, entry -> exit once closed -
-        # and the PNL with the exit price whenever there is one (money with
-        # a volume, the leveraged percent without)
-        gain, net_gain, pnl, pnl_money = operation_metrics(op, current_price)
+        # and the FINAL GAIN %, the leveraged gain at the exit price
+        # whenever there is one (identical to GAIN % for closed operations)
+        gain, net_gain, final_gain = operation_metrics(op, current_price)
         lev = leverage_value(op.get('leverage'))
 
         row = self.table.rowCount()
@@ -483,18 +484,18 @@ class OperationsDialog(QDialog):
         else:
             self.table.setItem(row, 12, QTableWidgetItem(''))
 
-        if pnl is not None:
-            text = fmt_pnl(pnl, pnl_money)
+        if final_gain is not None:
+            text = fmt_gain(final_gain)
             if closed and not planned:
-                color = LONG_COLOR if pnl >= 0 else SHORT_COLOR
-                self.table.setItem(row, 13, self._colored_item(text, color, pnl))
+                color = LONG_COLOR if final_gain >= 0 else SHORT_COLOR
+                self.table.setItem(row, 13, self._colored_item(text, color, final_gain))
             else:
-                # open operation: the potential PNL at the reference exit,
+                # open operation: the potential gain at the reference exit,
                 # plain (no background) while the operation runs; planned
                 # operation: a projection, plain until it really starts
-                item = self._numeric_item(text, pnl)
-                item.setToolTip("Potential PNL at the reference exit price" if not planned
-                                else "Planned operation - projected PNL, not a real result")
+                item = self._numeric_item(text, final_gain)
+                item.setToolTip("Potential gain at the reference exit price" if not planned
+                                else "Planned operation - projected gain, not a real result")
                 self.table.setItem(row, 13, item)
         else:
             self.table.setItem(row, 13, self._numeric_item('-', None))
@@ -529,7 +530,7 @@ class OperationsDialog(QDialog):
                 self._main_window.database.update_operation(op_id, op)
                 break
         if item.column() == 3:
-            # the planned flag drives the row's gain/PNL colors: rebuild so
+            # the planned flag drives the row's gain colors: rebuild so
             # unchecking it (the operation starts) brings the colors back
             self.refresh()
 
