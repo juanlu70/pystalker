@@ -1750,6 +1750,15 @@ class ChartView(QWidget):
         price_axis.setZValue(1000)
         self.plot_widget.setAxisItems({'right': price_axis})
         self.view_box = self.plot_widget.plotItem.vb
+        # pyqtgraph's auto-range is ON by default and re-fires while the
+        # chart is being rebuilt (clear, re-added items, new axis items, the
+        # deferred first layout), clobbering the manually set ranges - the
+        # first load could then show the pyqtgraph default [0, 1] Y range
+        # (a price ruler reading 0.50, 0.70...) or the full-history range.
+        # Every range in this program is set by hand (initial view, mouse,
+        # zoom, saved states), so auto-range is disabled for good here and
+        # re-disabled on every rebuild.
+        self.view_box.enableAutoRange(x=False, y=False)
         
         # The price tags are added to the scene, NOT parented to the axis:
         # the axis is destroyed and recreated on every redraw, and a child

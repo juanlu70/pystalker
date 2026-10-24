@@ -4,17 +4,20 @@ PyStalker - Channel Scanner dialog (Trading > Channel Scanner)
 The channel_scanner.py tool inside the application: assets whose price is
 near a drawn channel line (inside the channel, within the chosen proximity
 percentage of the lower or upper line), plus broken-channel notifications.
-The "Lower than" input filters the whole report to the assets whose last
-price is at that price or lower (the console scanner's --lower-than flag).
-The border between the two sections is draggable (the near-line table keeps
-about 3x the broken section's height). Double-clicking a row opens that
-asset's chart with draggable indicator lines at the channel's line values
-(upper green, lower red - the Operations entry/exit line precedent); the
-next scanner double-click replaces the previous lines. The CHANNEL column
-shows Ascending with a green background and Descending with a red one; the
-NEAR LINE column shows Lower with a red background and Upper with a green
-one; the broken-channels "beyond upper/lower line" column uses the same
-coding (white letters on green/red).
+The ASSET column shows the personalized display names (the official symbol
+rides along hidden, so charts and indicator lines keep working). Click a
+column header to sort like the Operations list (the numeric columns sort
+numerically). The "Lower than" input filters the whole report to the assets
+whose last price is at that price or lower (the console scanner's
+--lower-than flag). The border between the two sections is draggable (the
+near-line table keeps about 3x the broken section's height). Double-clicking
+a row opens that asset's chart with draggable indicator lines at the
+channel's line values (upper green, lower red - the Operations entry/exit
+line precedent); the next scanner double-click replaces the previous lines.
+The CHANNEL column shows Ascending with a green background and Descending
+with a red one; the NEAR LINE column shows Lower with a red background and
+Upper with a green one; the broken-channels "beyond upper/lower line"
+column uses the same coding (white letters on green/red).
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
@@ -25,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.channel_scanner import scan_channel_proximity
+from .operations_dialog import NumericItem
 
 # the Operations-list look: colored background with white bold text
 ASC_COLOR = QColor('#2e7d32')      # Ascending channel
@@ -158,32 +162,40 @@ class ChannelScannerDialog(QDialog):
             f"{price_filter} - scanned {res['scanned']} asset(s) with channel drawings")
 
         # near-line table
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._near_evals = {}
         for symbol, ev, price in res['near']:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self._near_evals[row] = ev
-            self._set_item(self.table, row, 0, symbol)
+            self._near_evals[symbol] = ev
+            self.table.setItem(row, 0, self._asset_item(symbol))
             # CHANNEL: green background for Ascending, red for Descending;
             # NEAR LINE: red for Lower, green for Upper
             self.table.setItem(row, 1, self._colored_item(
                 ev['kind'], ASC_COLOR if ev['kind'] == 'Ascending' else DESC_COLOR))
             self.table.setItem(row, 2, self._colored_item(
                 ev['near'], LINE_UPPER_COLOR if ev['near'] == 'Upper' else LINE_LOWER_COLOR))
-            proximity_item = self._set_item(self.table, row, 3, f"{ev['proximity']:.2f}%")
+            proximity_item = self._numeric_item(self.table, row, 3,
+                                               f"{ev['proximity']:.2f}%", ev['proximity'])
             proximity_item.setForeground(QColor('#2EA043'))
-            self._set_item(self.table, row, 4, f"{price:.2f}")
-            self._set_item(self.table, row, 5, f"{ev['line_value']:.2f}")
+            self._numeric_item(self.table, row, 4, f"{price:.2f}", price)
+            self._numeric_item(self.table, row, 5, f"{ev['line_value']:.2f}", ev['line_value'])
+        # sorting like the Operations list: click a column header to sort
+        # (numeric columns sort numerically); the default keeps the
+        # proximity order
+        self.table.setSortingEnabled(True)
+        self.table.sortItems(3, Qt.SortOrder.AscendingOrder)
 
         # broken table
+        self.broken_table.setSortingEnabled(False)
         self.broken_table.setRowCount(0)
         self._broken_evals = {}
         for symbol, ev, price in res['broken']:
             row = self.broken_table.rowCount()
             self.broken_table.insertRow(row)
-            self._broken_evals[row] = ev
-            self._set_item(self.broken_table, row, 0, symbol)
+            self._broken_evals[symbol] = ev
+            self.broken_table.setItem(row, 0, self._asset_item(symbol))
             # CHANNEL: the same green/red background as the near-line table
             self.broken_table.setItem(row, 1, self._colored_item(
                 ev['kind'], ASC_COLOR if ev['kind'] == 'Ascending' else DESC_COLOR))
@@ -193,14 +205,37 @@ class ChannelScannerDialog(QDialog):
                 f"beyond {ev['broken_line'].lower()} line",
                 LINE_UPPER_COLOR if ev['broken_line'] == 'Upper' else LINE_LOWER_COLOR))
             beyond = ev['beyond']
-            dist_item = self._set_item(self.broken_table, row, 3,
-                                       f"{beyond:.2f}%" if beyond != float('inf') else "?")
+            finite = beyond != float('inf')
+            dist_item = self._numeric_item(self.broken_table, row, 3,
+                                           f"{beyond:.2f}%" if finite else "?",
+                                           beyond if finite else None)
             dist_item.setForeground(QColor('#FF4444'))
+        self.broken_table.setSortingEnabled(True)
+        self.broken_table.sortItems(0, Qt.SortOrder.AscendingOrder)
 
         self.status_label.setText(
             f"{len(res['near'])} asset(s) near a channel line, "
             f"{len(res['broken'])} broken channel(s)"
             + (f" - skipped: {', '.join(res['skipped'])}" if res['skipped'] else ""))
+
+    def _asset_item(self, symbol):
+        """The ASSET cell: the personalized display name as the visible text,
+        the official symbol in the data role (charts, indicator lines and
+        evaluations always use the official symbol)."""
+        display = self._database.get_display_name(symbol) or symbol
+        item = QTableWidgetItem(display)
+        item.setData(Qt.ItemDataRole.UserRole, symbol)
+        return item
+
+    @staticmethod
+    def _numeric_item(table, row, col, text, value):
+        """A right-aligned cell that sorts numerically (like Operations)."""
+        item = NumericItem(text)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if value is not None:
+            item.setData(Qt.ItemDataRole.UserRole, value)
+        table.setItem(row, col, item)
+        return item
 
     @staticmethod
     def _colored_item(text, color):
@@ -214,27 +249,23 @@ class ChannelScannerDialog(QDialog):
         item.setFont(font)
         return item
 
-    @staticmethod
-    def _set_item(table, row, col, text):
-        item = QTableWidgetItem(str(text))
-        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                              if col >= 3 else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        table.setItem(row, col, item)
-        return item
-
     def _symbol_from_row(self, table, row):
         item = table.item(row, 0)
-        return item.text() if item else None
+        if not item:
+            return None
+        # the cell shows the personalized name; the official symbol rides
+        # along in the data role
+        return item.data(Qt.ItemDataRole.UserRole) or item.text()
 
     def on_row_double_clicked(self, row, _col):
         symbol = self._symbol_from_row(self.table, row)
         if symbol and self._main_window:
-            self._open_asset_chart(symbol, self._near_evals.get(row))
+            self._open_asset_chart(symbol, self._near_evals.get(symbol))
 
     def on_broken_double_clicked(self, row, _col):
         symbol = self._symbol_from_row(self.broken_table, row)
         if symbol and self._main_window:
-            self._open_asset_chart(symbol, self._broken_evals.get(row))
+            self._open_asset_chart(symbol, self._broken_evals.get(symbol))
 
     def _open_asset_chart(self, symbol, ev):
         """Open the asset's chart with draggable indicator lines at the

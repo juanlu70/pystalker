@@ -8,8 +8,9 @@ channels), and reports:
 
   NEAR A LINE: assets whose last close is inside the channel and within
   --max-proximity (default 10%) of the lower or the upper channel line:
-  the ticker, whether the channel is ascending or descending, which line
-  the price is near (lower/upper), and the proximity percentage
+  the ticker (its personalized display name when the asset has one, like
+  the Operations list), whether the channel is ascending or descending,
+  which line the price is near (lower/upper), and the proximity percentage
   (distance of the price from the line, relative to the line's value).
   The CHANNEL column shows Ascending in green and Descending in red
   letters; the NEAR LINE column shows Upper in green and Lower in red.
@@ -43,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pystalker.core.channel_scanner import scan_channel_proximity
+from pystalker.core.operations import get_display_name
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
 
@@ -79,6 +81,11 @@ def run(args):
     conn = sqlite3.connect(args.db)
     res = scan_channel_proximity(conn, max_proximity=args.max_proximity, symbol=args.symbol,
                                   lower_than=args.lower_than)
+    # the personalized display names of the listed assets (like Operations);
+    # resolved while the connection is still open
+    names = {}
+    for sym, _, _ in res['near'] + res['broken']:
+        names[sym] = get_display_name(conn, sym) or sym
     conn.close()
 
     near_results = res['near']
@@ -94,7 +101,7 @@ def run(args):
     print(f"Scanned {scanned} asset(s) with channel drawings\n")
 
     if near_results:
-        name_w = max(len(r[0]) for r in near_results)
+        name_w = max(len(names[r[0]]) for r in near_results)
         name_w = max(name_w, len('ASSET'))
         print(f"{'ASSET':<{name_w}}  {'CHANNEL':<11} {'NEAR LINE':<10} {'PROXIMITY':>9}  "
               f"{'LAST CLOSE':>12}  {'LINE VALUE':>12}")
@@ -105,7 +112,7 @@ def run(args):
                              GREEN if ev['kind'] == 'Ascending' else RED, use_color)
             near_line = colored(f"{ev['near']:<10}",
                                 GREEN if ev['near'] == 'Upper' else RED, use_color)
-            print(f"{symbol:<{name_w}}  {channel} {near_line} "
+            print(f"{names[symbol]:<{name_w}}  {channel} {near_line} "
                   f"{ev['proximity']:>8.2f}%  {price:>12.2f}  {ev['line_value']:>12.2f}")
         print(f"\n{len(near_results)} asset(s) near a channel line")
     else:
@@ -123,7 +130,7 @@ def run(args):
                              GREEN if ev['kind'] == 'Ascending' else RED, use_color)
             line_s = colored(f"beyond the {ev['broken_line'].lower()} line",
                               GREEN if ev['broken_line'] == 'Upper' else RED, use_color)
-            print(f"  {symbol}: {kind_s} - price {price:.2f} is {line_s} "
+            print(f"  {names[symbol]}: {kind_s} - price {price:.2f} is {line_s} "
                   f"({ev['line_value']:.2f}) by {beyond_s}")
         print(f"{len(broken_results)} broken channel(s)")
 
