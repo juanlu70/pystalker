@@ -363,7 +363,11 @@ def classification_metrics(actual, prob, threshold):
     out['recall'] = tp / (tp + fn) if tp + fn else None
     n_neg = n - int(y_true.sum())
     spec = (n_neg - fp) / n_neg if n_neg else None
-    out['balanced'] = (out['recall'] + spec) / 2 if spec is not None else None
+    # balanced accuracy needs BOTH classes in the window: when the test days
+    # are all quiet (no high day) or all wild (no quiet day), one of the two
+    # sides is undefined and so is their average
+    out['balanced'] = ((out['recall'] + spec) / 2
+                       if spec is not None and out['recall'] is not None else None)
     out['auc'] = rank_auc(y_true, np.asarray(prob, float))
     return out
 
