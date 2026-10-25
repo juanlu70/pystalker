@@ -25,7 +25,8 @@ computable at day t without any knowledge of day t+1. The two targets:
 Modes:
   - default: predicts the day after the last stored bar of every asset
   - --asset SYMBOL: only that asset, with a verbose single-asset report
-    (training range, feature importances)
+    (training range, feature importances) - the official symbol, its
+    personalized display name, or an unambiguous part of either
   - --final-date YYYY-MM-DD: HISTORICAL TEST - train ONLY with data
     strictly before that date, then predict every bar from it on,
     out-of-sample, comparing predicted vs actual volatility (regression
@@ -33,9 +34,16 @@ Modes:
     correlation; classification metrics: accuracy, precision, recall,
     ROC AUC; plus a sample of the daily predictions)
 
+The listings show the assets' PERSONALIZED DISPLAY NAMES - the same
+"{symbol} (name)" values stored in the application's ticker list and
+Operations - not the official tickers; an asset without a display name
+falls back to its official symbol. The models always fetch and train by
+the official symbol underneath.
+
 Usage:
   python console_programs/volatility_prediction.py
   python console_programs/volatility_prediction.py --asset ES=F
+  python console_programs/volatility_prediction.py --asset Samsung
   python console_programs/volatility_prediction.py --asset ES=F --final-date 2026-06-30
   python console_programs/volatility_prediction.py --final-date 2026-06-30
   python console_programs/volatility_prediction.py --model sklearn --no-color
@@ -93,11 +101,28 @@ def open_db_read_only(path):
 
 
 def load_symbols(conn):
+    """(official symbol, personalized display name) per stored asset. The
+    display name lives in each asset's "{symbol}_settings" table under the
+    'display_name' key - the same place the application stores it - and
+    falls back to the official symbol when unset, exactly like the ticker
+    list and Operations do."""
     try:
-        return [r[0] for r in conn.execute(
+        symbols = [r[0] for r in conn.execute(
             "SELECT symbol FROM symbols ORDER BY symbol").fetchall()]
     except sqlite3.OperationalError:
         sys.exit("The database has no symbols table - is this a pystalker database?")
+    assets = []
+    for symbol in symbols:
+        name = ''
+        try:
+            row = conn.execute(
+                f'SELECT value FROM "{symbol}_settings" WHERE key = ?',
+                ('display_name',)).fetchone()
+            name = row[0] if row and row[0] else ''
+        except sqlite3.Error:
+            name = ''
+        assets.append((symbol, name or symbol))
+    return assets
 
 
 def load_bars(conn, symbol):
@@ -530,13 +555,25 @@ def run(args):
 
     conn = open_db_read_only(args.db)
     try:
-        symbols = load_symbols(conn)
+        assets = load_symbols(conn)
         if args.asset is not None:
-            if args.asset not in symbols:
+            # the official symbol, the exact display name, or an unambiguous
+            # part of either
+            matches = [(s, n) for s, n in assets if args.asset in (s, n)]
+            if not matches:
+                low = args.asset.lower()
+                matches = [(s, n) for s, n in assets
+                           if low in n.lower() or low in s.lower()]
+            if not matches:
+                hint = ', '.join(n for _, n in assets[:8])
                 sys.exit(f"Asset \"{args.asset}\" is not in the database. "
-                         f"Stored assets: {', '.join(symbols[:8])}"
-                         f"{' ...' if len(symbols) > 8 else ''}")
-            symbols = [args.asset]
+                         f"Stored assets: {hint}"
+                         f"{' ...' if len(assets) > 8 else ''}")
+            if len(matches) > 1:
+                hint = ', '.join(n for _, n in matches[:8])
+                sys.exit(f"\"{args.asset}\" matches several assets: {hint} - "
+                         f"be more specific")
+            assets = matches
         verbose = args.asset is not None
 
         mode = (f"historical test (trained strictly before {args.final_date}, "
@@ -545,50 +582,50 @@ def run(args):
         print(colored("VOLATILITY PREDICTION", None, use_color, bold=True))
         print(f"Database: {args.db} (read-only)")
         print(f"Model: {args.model} (one per asset, seed {SEED}) | "
-              f"assets: {len(symbols)} | mode: {mode}\n")
+              f"assets: {len(assets)} | mode: {mode}\n")
 
         predictions, backtests, skipped = [], [], []
-        for symbol in symbols:
+        for symbol, name in assets:
             df = load_bars(conn, symbol)
             if df is None:
-                skipped.append((symbol, 'no bars stored'))
+                skipped.append((name, 'no bars stored'))
                 continue
             if len(df) < args.min_bars:
-                skipped.append((symbol, f'{len(df)} bars (< {args.min_bars})'))
+                skipped.append((name, f'{len(df)} bars (< {args.min_bars})'))
                 continue
             dataset = build_dataset(df)
             if dataset is None:
-                skipped.append((symbol, f'too few usable rows after the '
-                                         f'{WARMUP_BARS}-bar feature warm-up'))
+                skipped.append((name, f'too few usable rows after the '
+                                       f'{WARMUP_BARS}-bar feature warm-up'))
                 continue
             if args.final_date is not None:
                 bt = run_backtest(dataset, args.final_date, args.model)
                 if 'skip' in bt:
-                    skipped.append((symbol, bt['skip']))
+                    skipped.append((name, bt['skip']))
                 else:
-                    backtests.append((symbol, dataset, bt))
+                    backtests.append((name, dataset, bt))
             else:
                 pred = run_prediction(dataset, args.model)
                 if 'skip' in pred:
-                    skipped.append((symbol, pred['skip']))
+                    skipped.append((name, pred['skip']))
                 else:
-                    predictions.append((symbol, dataset, pred))
+                    predictions.append((name, dataset, pred))
     finally:
         conn.close()
 
     if args.final_date is None:
         # ---- next-day predictions
         if verbose:
-            for symbol, dataset, pred in predictions:
-                print_title(symbol, use_color)
+            for name, dataset, pred in predictions:
+                print_title(name, use_color)
                 print_prediction_block(dataset, pred, args.model, use_color)
         elif predictions:
             headers = ['ASSET', 'LAST BAR', 'PREDICTED DAY', 'PRED VOL %',
                         'PROB HIGH', 'THRESHOLD %']
             aligns = ['<', '<', '<', '>', '>', '>']
             rows = []
-            for symbol, dataset, pred in predictions:
-                rows.append((symbol,
+            for name, dataset, pred in predictions:
+                rows.append((name,
                              str(dataset['last_bar'].date()),
                              str(pd.Timestamp(dataset['next_date']).date()),
                              fmt_vol(pred['vol']),
@@ -612,8 +649,8 @@ def run(args):
     else:
         # ---- historical test results
         if verbose:
-            for symbol, dataset, bt in backtests:
-                print_title(symbol, use_color)
+            for name, dataset, bt in backtests:
+                print_title(name, use_color)
                 print_backtest_block(dataset, bt, use_color)
                 pred = run_prediction(dataset, args.model)
                 if 'skip' not in pred:
@@ -626,9 +663,9 @@ def run(args):
                        'HIGH DAYS']
             aligns = ['<', '>', '>', '>', '>', '>', '>', '>']
             rows = []
-            for symbol, dataset, bt in backtests:
+            for name, dataset, bt in backtests:
                 r, c = bt['reg'], bt['cls']
-                rows.append((symbol, str(len(bt['train'])), str(len(bt['test'])),
+                rows.append((name, str(len(bt['train'])), str(len(bt['test'])),
                              fmt_metric(r['mae'], digits=3),
                              fmt_metric(r['skill'], signed=True),
                              f"{c['accuracy'] * 100:.0f} %",
@@ -678,8 +715,10 @@ def build_parser(parser):
                         help=f"path to the database (default: {DB_DEFAULT}; "
                              f"only ever read)")
     parser.add_argument('--asset', default=None,
-                        help="predict only this asset (its exact stored symbol, "
-                             "e.g. ES=F); prints the verbose single-asset report")
+                        help="predict only this asset - its official symbol (e.g. "
+                             "ES=F), its personalized display name, or an "
+                             "unambiguous part of either; prints the verbose "
+                             "single-asset report")
     parser.add_argument('--final-date', type=date_arg, default=None, metavar='YYYY-MM-DD',
                         help="historical test: train only with data strictly before "
                              "this date, then predict every following bar "

@@ -653,7 +653,10 @@ class PyStalkerWindow(QMainWindow):
             QMessageBox.information(self, "Create Spread", "You need at least 2 assets in the database to create a spread.")
             return
         spreads = self.database.load_spreads()
-        dialog = SpreadDialog(symbols, spreads, self)
+        # the dialog lists the assets by their personalized display names;
+        # the official symbols travel underneath (empty name -> official)
+        display_names = {s: self.database.get_display_name(s) for s in symbols}
+        dialog = SpreadDialog(symbols, spreads, display_names, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             symbol1 = dialog.get_symbol1()
             symbol2 = dialog.get_symbol2()
