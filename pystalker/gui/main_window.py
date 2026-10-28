@@ -89,6 +89,7 @@ class PyStalkerWindow(QMainWindow):
         self.current_symbol = None
         self.indicator_dialog = None
         self._channel_scanner_dialog = None
+        self._supertrend_dialog = None
         self._operations_dialog = None
         
         self.setWindowTitle("PyStalker - Stock Charting Tool")
@@ -381,7 +382,10 @@ class PyStalkerWindow(QMainWindow):
         channel_scanner_action = QAction("Channel Scanner", self)
         channel_scanner_action.triggered.connect(self.on_channel_scanner)
         trading_menu.addAction(channel_scanner_action)
-        
+
+        supertrend_action = QAction("Supertrend", self)
+        supertrend_action.triggered.connect(self.on_supertrend)
+        trading_menu.addAction(supertrend_action)
         operations_action = QAction("Operations", self)
         operations_action.triggered.connect(self.on_operations)
         trading_menu.addAction(operations_action)
@@ -1712,6 +1716,16 @@ class PyStalkerWindow(QMainWindow):
         self._channel_scanner_dialog.raise_()
         self._channel_scanner_dialog.activateWindow()
         self._channel_scanner_dialog.run_scan()
+
+    def on_supertrend(self):
+        """Trading > Supertrend: open the in-app supertrend scanner."""
+        if self._supertrend_dialog is None:
+            from .supertrend_dialog import SupertrendDialog
+            self._supertrend_dialog = SupertrendDialog(self.database, self)
+        self._supertrend_dialog.show()
+        self._supertrend_dialog.raise_()
+        self._supertrend_dialog.activateWindow()
+        self._supertrend_dialog.run_scan()
     
     def on_operations(self):
         """Trading > Operations: annotate and list trading operations."""
