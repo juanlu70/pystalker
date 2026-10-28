@@ -19,6 +19,11 @@ Every command keeps the flags of its original program:
                channel line, and broken channels.
     --db --max-proximity --symbol
 
+  supertrend   The supertrend scanner: assets whose close is touching
+               the supertrend line (period 10, multiplier 1.8) or
+               crossed it (the trend flipped).
+    --db --period --multiplier --max-proximity --symbol --no-color
+
   list         The assets of an exchange - the second argument is the
                exchange: "list phemex" or "list pionex".
     --search --type --quote(phemex) --all
@@ -30,6 +35,8 @@ Usage:
   python pystalker_cli.py update
   python pystalker_cli.py update --symbol AAPL
   python pystalker_cli.py scanner --max-proximity 5
+  python pystalker_cli.py supertrend
+  python pystalker_cli.py supertrend --multiplier 3 --symbol BTC-USD
   python pystalker_cli.py list phemex --search Tesla
   python pystalker_cli.py list pionex --type perp
 
@@ -59,7 +66,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='pystalker_cli.py',
         description="The unified PyStalker command-line tool "
-                    "(operations, update, scanner, list)")
+                    "(operations, update, scanner, supertrend, list)")
     sub = parser.add_subparsers(dest='command', metavar='command')
 
     def command(name, module_name, help_text):
@@ -74,6 +81,8 @@ def main(argv=None):
             "update all assets' data from their data sources")
     command('scanner', 'channel_scanner',
             "find assets whose price is near a drawn channel line")
+    command('supertrend', 'supertrend',
+            "find assets whose close is touching a supertrend line or crossed it")
 
     # list: the second argument is the exchange
     list_parser = sub.add_parser(
