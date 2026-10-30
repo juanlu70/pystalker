@@ -81,13 +81,24 @@ def run(args):
     conn = sqlite3.connect(args.db)
     res = scan_channel_proximity(conn, max_proximity=args.max_proximity, symbol=args.symbol,
                                   lower_than=args.lower_than)
-    # the personalized display names of the listed assets (like Operations);
-    # resolved while the connection is still open
+    names = resolve_names(conn, res)
+    conn.close()
+    print_channel_report(res, names, args)
+
+
+def resolve_names(conn, res):
+    """The personalized display names of the listed assets (like Operations);
+    resolved while the connection is still open."""
     names = {}
     for sym, _, _ in res['near'] + res['broken']:
         names[sym] = get_display_name(conn, sym) or sym
-    conn.close()
+    return names
 
+
+def print_channel_report(res, names, args):
+    """The channel scanner's report - shared by this standalone program and
+    the fused scanner (console_programs/scanner.py, the pystalker_cli.py
+    'scanner' command)."""
     near_results = res['near']
     broken_results = res['broken']
     skipped = res['skipped']

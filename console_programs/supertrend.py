@@ -83,13 +83,24 @@ def run(args):
     conn = sqlite3.connect(args.db)
     res = scan_supertrend(conn, period=args.period, multiplier=args.multiplier,
                           max_proximity=args.max_proximity, symbol=args.symbol)
-    # the personalized display names of the listed assets (like Operations);
-    # resolved while the connection is still open
+    names = resolve_names(conn, res)
+    conn.close()
+    print_supertrend_report(res, names, args)
+
+
+def resolve_names(conn, res):
+    """The personalized display names of the listed assets (like Operations);
+    resolved while the connection is still open."""
     names = {}
     for sym, _, _ in res['touching'] + res['surpassed']:
         names[sym] = get_display_name(conn, sym) or sym
-    conn.close()
+    return names
 
+
+def print_supertrend_report(res, names, args):
+    """The supertrend scanner's report - shared by this standalone program
+    and the fused scanner (console_programs/scanner.py, the
+    pystalker_cli.py 'scanner' command)."""
     touching = res['touching']
     surpassed = res['surpassed']
     skipped = res['skipped']
