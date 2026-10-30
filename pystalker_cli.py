@@ -15,14 +15,16 @@ Every command keeps the flags of its original program:
                twin): every asset from the source that serves it.
     --db --symbol --no-color
 
-  scanner      The channel scanner: assets whose price is near a drawn
-               channel line, and broken channels.
-    --db --max-proximity --symbol
-
-  supertrend   The supertrend scanner: assets whose close is touching
-               the supertrend line (period 10, multiplier 1.8) or
-               crossed it (the trend flipped).
-    --db --period --multiplier --max-proximity --symbol --no-color
+  scanner      The fused scanner: the channel scanner and the supertrend
+               scanner in one command - the drawn channels (near a line,
+               broken) and/or the supertrend indicator (touching the
+               line, trend flips); bare or --all scans both at once and
+               appends the both-scans-by-asset view (each asset's two
+               conditions side by side, sorted by asset name, with the
+               both/only-one counts); --channels or --supertrend scans
+               one alone.
+    --channels/--supertrend/--all --db --max-proximity --asset
+    --lower-than(channels) --period/--multiplier(supertrend) --no-color
 
   list         The assets of an exchange - the second argument is the
                exchange: "list phemex" or "list pionex".
@@ -34,9 +36,10 @@ Usage:
   python pystalker_cli.py operations --asset BTC --planned
   python pystalker_cli.py update
   python pystalker_cli.py update --symbol AAPL
-  python pystalker_cli.py scanner --max-proximity 5
-  python pystalker_cli.py supertrend
-  python pystalker_cli.py supertrend --multiplier 3 --symbol BTC-USD
+  python pystalker_cli.py scanner                    (channels + supertrend)
+  python pystalker_cli.py scanner --channels
+  python pystalker_cli.py scanner --supertrend --multiplier 3
+  python pystalker_cli.py scanner --all --asset BTC-USD --max-proximity 5
   python pystalker_cli.py list phemex --search Tesla
   python pystalker_cli.py list pionex --type perp
 
@@ -66,7 +69,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='pystalker_cli.py',
         description="The unified PyStalker command-line tool "
-                    "(operations, update, scanner, supertrend, list)")
+                    "(operations, update, scanner, list)")
     sub = parser.add_subparsers(dest='command', metavar='command')
 
     def command(name, module_name, help_text):
@@ -79,10 +82,9 @@ def main(argv=None):
             "list the trading operations journal")
     command('update', 'update_data',
             "update all assets' data from their data sources")
-    command('scanner', 'channel_scanner',
-            "find assets whose price is near a drawn channel line")
-    command('supertrend', 'supertrend',
-            "find assets whose close is touching a supertrend line or crossed it")
+    command('scanner', 'scanner',
+            "scan the drawn channels and/or the supertrend indicator "
+            "(default: both)")
 
     # list: the second argument is the exchange
     list_parser = sub.add_parser(
