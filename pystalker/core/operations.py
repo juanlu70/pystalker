@@ -3,8 +3,8 @@ PyStalker - Operations core
 
 The shared logic of the trading journal (Trading > Operations):
 
-* the gain math (used by the in-application list and by the standalone
-  operations_list.py CLI tool, so both always show the same numbers),
+* the gain math (used by the in-application list and by the operations
+  command of pystalker_cli.py, so both always show the same numbers),
 * read-only database accessors for the CLI (a plain sqlite3 connection,
   the channel_scanner precedent: no writes, no migrations, safe on the
   live database while the application runs).

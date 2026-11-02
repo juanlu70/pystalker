@@ -15,8 +15,8 @@ The operations are stored in the `operations` table of the database.
 An operation can carry a stop price: a light-red (RGB 255, 85, 127)
 horizontal line is drawn on the asset's chart at the stop level alongside
 the entry/exit lines when it is set - an empty stop draws no line - and
-the STOP column of the list (and of the operations_list.py CLI tool,
-which mirrors these columns exactly) shows it.
+the STOP column of the list (and of pystalker_cli.py's operations
+command, which mirrors these columns exactly) shows it.
 """
 from PyQt6.QtCore import Qt, QDateTime
 from PyQt6.QtGui import QFont, QColor
@@ -429,8 +429,8 @@ class OperationsDialog(QDialog):
         exit_price = op.get('exit_price')
         current_price = self._current_price(op.get('asset'))
 
-        # the gain math is shared with the operations_list.py CLI
-        # tool (pystalker/core/operations.py): the leveraged directional
+        # the gain math is shared with pystalker_cli.py's operations
+        # command (pystalker/core/operations.py): the leveraged directional
         # move - entry -> current while open, entry -> exit once closed -
         # and the FINAL GAIN %, the leveraged gain at the exit price
         # whenever there is one (identical to GAIN % for closed operations)
