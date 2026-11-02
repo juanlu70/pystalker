@@ -139,7 +139,7 @@ class IndicatorDialog(QDialog):
         line_defaults = IndicatorManager.LINE_DEFAULTS.get(indicator_name, [])
         for line_def in line_defaults:
             self.line_colors[line_def['name']] = line_def['color']
-            self.line_visibility[line_def['name']] = True
+            self.line_visibility[line_def['name']] = line_def.get('visible', True)
         
         for param_name, default_value in params.items():
             label = QLabel(f"{param_name}:")
@@ -178,7 +178,9 @@ class IndicatorDialog(QDialog):
                 btn.clicked.connect(lambda checked, n=line_name: self.choose_line_color(n))
                 
                 vis_check = QCheckBox("Visible")
-                vis_check.setChecked(True)
+                # the per-line default: unchecked for lines that come hidden
+                # (SuperTrend's Up/Down) - the toggle stays available
+                vis_check.setChecked(line_def.get('visible', True))
                 self._visibility_checks[line_name] = vis_check
                 
                 row_layout = QHBoxLayout()
