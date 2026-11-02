@@ -1257,8 +1257,10 @@ class PyStalkerWindow(QMainWindow):
             params = dialog.get_indicator_params()
             color = dialog.get_indicator_color()
             colors = dialog.get_indicator_colors()
+            line_visibility = dialog.get_indicator_line_visibility()
             if indicator_name:
-                self.add_indicator_to_chart(indicator_name, params, color, colors)
+                self.add_indicator_to_chart(indicator_name, params, color, colors,
+                                            line_visibility)
     
     def on_edit_indicators(self):
         from .indicator_dialog import EditIndicatorsDialog
@@ -1328,7 +1330,7 @@ class PyStalkerWindow(QMainWindow):
         tab.restore_splitter_state()
         self.database.save_chart_indicators(tab.symbol, tab.get_indicators())
     
-    def add_indicator_to_chart(self, indicator_name: str, params: dict = None, color: str = None, colors: dict = None):
+    def add_indicator_to_chart(self, indicator_name: str, params: dict = None, color: str = None, colors: dict = None, line_visibility: dict = None):
         tab = self.chart_tabs.get_current_tab()
         if not tab or not tab.symbol:
             return
@@ -1346,17 +1348,23 @@ class PyStalkerWindow(QMainWindow):
             return
         
         indicator_type = indicator.indicator_type
+        # the Add dialog's per-line visibility; when a caller provides none
+        # (a programmatic add), the LINE_DEFAULTS 'visible' flags apply -
+        # SuperTrend's Up/Down lines come hidden by default
+        if line_visibility is None:
+            line_visibility = {ld['name']: ld.get('visible', True)
+                               for ld in IndicatorManager.LINE_DEFAULTS.get(indicator_name, [])}
         tab.add_indicator(indicator_name, indicator_type, params or {})
         first_color = color if color else (list(colors.values())[0] if colors else '#00BFFF')
         tab.indicators[-1]['color'] = first_color
         tab.indicators[-1]['colors'] = colors if colors else {}
         tab.indicators[-1]['visible'] = True
-        tab.indicators[-1]['line_visibility'] = {line.key: True for line in indicator.lines} if indicator_type == Indicator.OVERLAY else {}
+        tab.indicators[-1]['line_visibility'] = line_visibility if indicator_type == Indicator.OVERLAY else {}
         tab.indicators[-1]['hlines'] = [{'level': hl['level'], 'color': hl['color']} for hl in indicator.hlines]
         
         if indicator_type == Indicator.OVERLAY:
             for line in indicator.lines:
-                tab.chart_view.add_indicator_line(line, visible=True, unique_name=tab.indicators[-1]['name'])
+                tab.chart_view.add_indicator_line(line, visible=line_visibility.get(line.key, True), unique_name=tab.indicators[-1]['name'])
         else:
             tab.add_indicator_panel(indicator, df)
             tab._distribute_splitter_sizes()

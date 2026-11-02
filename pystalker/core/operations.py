@@ -167,9 +167,9 @@ def list_operations(conn, asset=None, group=None, paper=None) -> dict:
     total counts the operations before the filters and each row is a dict:
       entry_date, asset (the text to display: the personalized name when the
       asset is in the database), symbol (the resolved official symbol, or None),
-      paper, planned, side, entry_price, volume, leverage (text), lev (numeric),
-      current_price, gain, net_gain, final_gain, exit_date, exit_price, open,
-      group (the row's group: 'open' / 'planned' / 'closed')
+      paper, planned, side, entry_price, stop_price, volume, leverage (text),
+      lev (numeric), current_price, gain, net_gain, final_gain, exit_date,
+      exit_price, open, group (the row's group: 'open' / 'planned' / 'closed')
     plus the group counts of the listed rows (n_open + n_planned + n_closed
     = len(rows)): n_open, n_closed, n_planned.
     Rows are sorted newest entry first (like the application's list).
@@ -205,6 +205,7 @@ def list_operations(conn, asset=None, group=None, paper=None) -> dict:
             'planned': bool(op.get('planned')),
             'side': op.get('side') or 'Long',
             'entry_price': op.get('entry_price'),
+            'stop_price': op.get('stop_price'),
             'volume': op.get('volume'),
             'leverage': str(op.get('leverage') or '').strip(),
             'lev': leverage_value(op.get('leverage')),

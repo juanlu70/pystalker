@@ -15,14 +15,16 @@ sections is draggable (the touching table keeps about 3x the surpassed
 section's height).
 
 Double-clicking a row opens that asset's chart with a draggable
-indicator line at the reported level, colored BY THE TREND (Up = green,
-Down = red - in a supertrend the trend is the signal, unlike the channel
-scanner's line-kind colors); the next scanner double-click replaces the
-previous line. The TREND column shows Up with a green background and
-Down with a red one; the LINE column shows Lower with a red background
-and Upper with a green one (the channel scanner's coding); the surpassed
-"beyond upper/lower line" column uses the same coding (white letters on
-green/red).
+indicator line at the reported level, colored BY THE TREND (the
+indicator's Up color RGB(85,255,0) in an Up trend, its Down color
+RGB(255,0,0) in a Down one - in a supertrend the trend is the signal,
+unlike the channel scanner's line-kind colors); the next scanner
+double-click replaces the previous line. The TREND and LINE columns
+use the supertrend indicator's palette as backgrounds with black bold
+letters (the bright colors would make white ones illegible): Up
+RGB(85,255,0), Down RGB(255,0,0), Upper RGB(85,255,127), Lower
+RGB(255,85,127); the surpassed "beyond upper/lower line" column uses
+the same coding.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
@@ -36,17 +38,19 @@ from ..core.supertrend import (SUPERTREND_MULTIPLIER, SUPERTREND_PERIOD,
                                 scan_supertrend)
 from .operations_dialog import NumericItem
 
-# the Operations-list look: colored background with white bold text
-TREND_UP_COLOR = QColor('#2e7d32')        # Up trend
-TREND_DOWN_COLOR = QColor('#c62828')     # Down trend
-LINE_UPPER_COLOR = QColor('#2e7d32')     # the upper line
-LINE_LOWER_COLOR = QColor('#c62828')     # the lower line
+# the supertrend indicator's palette (the user's colors) as the cell
+# backgrounds - black bold letters, white would be illegible on the
+# bright colors
+TREND_UP_COLOR = QColor(85, 255, 0)        # Up trend    - RGB(85,255,0)
+TREND_DOWN_COLOR = QColor(255, 0, 0)       # Down trend  - RGB(255,0,0)
+LINE_UPPER_COLOR = QColor(85, 255, 127)    # upper line  - RGB(85,255,127)
+LINE_LOWER_COLOR = QColor(255, 85, 127)    # lower line  - RGB(255,85,127)
 
 # the chart indicator line of a double-clicked row (a draggable hline
 # drawing, the Operations entry/exit precedent): colored BY THE TREND -
-# green when the asset is in an Up trend, red in a Down one (the trend is
-# the supertrend's signal)
-SCANNER_UP_LINE = '#00FF00'
+# the indicator's Up color when the asset is in an Up trend, its Down
+# color in a Down one (the trend is the supertrend's signal)
+SCANNER_UP_LINE = '#55FF00'
 SCANNER_DOWN_LINE = '#FF0000'
 
 
@@ -170,8 +174,8 @@ class SupertrendDialog(QDialog):
             self.table.insertRow(row)
             self._touching_evals[symbol] = ev
             self.table.setItem(row, 0, self._asset_item(symbol))
-            # TREND: green background for Up, red for Down; LINE: red for
-            # Lower, green for Upper (the channel scanner's coding)
+            # TREND: the indicator's Up/Down palette; LINE: its Upper/Lower
+            # one - black bold letters on the colored backgrounds
             self.table.setItem(row, 1, self._colored_item(
                 ev['trend'], TREND_UP_COLOR if ev['trend'] == 'Up' else TREND_DOWN_COLOR))
             self.table.setItem(row, 2, self._colored_item(
@@ -242,11 +246,12 @@ class SupertrendDialog(QDialog):
 
     @staticmethod
     def _colored_item(text, color):
-        """A cell with a colored background and white bold text - the same
-        look as the Operations list (the TREND and LINE columns)."""
+        """A cell with a colored background and black bold text - the
+        supertrend indicator's palette (white letters would be illegible
+        on the bright colors)."""
         item = QTableWidgetItem(str(text))
         item.setBackground(color)
-        item.setForeground(QColor('#FFFFFF'))
+        item.setForeground(QColor('#000000'))
         font = item.font()
         font.setBold(True)
         item.setFont(font)

@@ -12,6 +12,11 @@ planned). Planned operations are still only a project that
 may or may not start: they keep a plain gain look (no green/red).
 Double-click a row (or Edit) to fix mistakes, Delete removes a record.
 The operations are stored in the `operations` table of the database.
+An operation can carry a stop price: a light-red (RGB 255, 85, 127)
+horizontal line is drawn on the asset's chart at the stop level alongside
+the entry/exit lines when it is set - an empty stop draws no line - and
+the STOP column of the list (and of the operations_list.py CLI tool,
+which mirrors these columns exactly) shows it.
 """
 from PyQt6.QtCore import Qt, QDateTime
 from PyQt6.QtGui import QFont, QColor
@@ -33,6 +38,7 @@ SHORT_COLOR = QColor('#c62828')
 ENTRY_LONG_LINE = '#00FF00'    # bright green entry line for longs
 ENTRY_SHORT_LINE = '#FF0000'   # bright red entry line for shorts
 EXIT_LINE = '#55AAFF'          # bright blue exit line (RGB 85, 170, 255)
+STOP_LINE = '#FF557F'          # light red stop line (RGB 255, 85, 127)
 
 BOT_OPTIONS = ['No bot', 'Bot']
 MARKET_OPTIONS = ['Spot', 'Futures']
@@ -85,6 +91,14 @@ class OperationFormDialog(QDialog):
         self.entry_price_edit = QLineEdit()
         self.entry_price_edit.setPlaceholderText("e.g. 83043")
         form.addRow("Entry price:", self.entry_price_edit)
+
+        self.stop_price_edit = QLineEdit()
+        self.stop_price_edit.setPlaceholderText("e.g. 79200 (optional)")
+        self.stop_price_edit.setToolTip(
+            "The stop-loss price of the operation (optional).\n"
+            "A light-red horizontal line is drawn on the asset's chart at\n"
+            "this level alongside the entry/exit lines (no line when empty).")
+        form.addRow("Stop price:", self.stop_price_edit)
 
         self.volume_edit = QLineEdit()
         self.volume_edit.setPlaceholderText("e.g. 2500 (optional)")
@@ -162,6 +176,8 @@ class OperationFormDialog(QDialog):
         self.asset_edit.setText(op.get('asset') or '')
         self.side_combo.setCurrentText(op.get('side') or 'Long')
         self.entry_price_edit.setText(f"{op.get('entry_price') or ''}")
+        if op.get('stop_price') is not None:
+            self.stop_price_edit.setText(f"{op['stop_price']}")
         self.volume_edit.setText(f"{op.get('volume') or ''}")
         self.leverage_combo.setCurrentText(str(op.get('leverage') or '1'))
         dt = QDateTime.fromString(str(op.get('entry_date') or ''), 'yyyy-MM-dd HH:mm')
@@ -211,6 +227,18 @@ class OperationFormDialog(QDialog):
                                     "The volume must be a positive number (the invested amount).")
                 return
 
+        stop_price = None
+        stop_text = self.stop_price_edit.text().strip()
+        if stop_text:
+            try:
+                stop_price = float(stop_text)
+                if stop_price <= 0:
+                    raise ValueError
+            except ValueError:
+                QMessageBox.warning(self, "Operation",
+                                    "The stop price must be a positive number.")
+                return
+
         open_flag = self.open_check.isChecked()
         self._operation_data = {
             'bot': self.bot_combo.currentText(),
@@ -219,6 +247,7 @@ class OperationFormDialog(QDialog):
             'asset': asset,
             'side': self.side_combo.currentText(),
             'entry_price': entry_price,
+            'stop_price': stop_price,
             'volume': volume,
             'leverage': self.leverage_combo.currentText().strip(),
             'entry_date': self.entry_dt.dateTime().toString('yyyy-MM-dd HH:mm'),
@@ -254,9 +283,9 @@ class OperationsDialog(QDialog):
     in the Open / Planned / Closed tabs."""
 
     GROUPS = ('open', 'planned', 'closed')
-    COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'VOLUME',
-               'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE',
-               'FINAL GAIN %']
+    COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'STOP',
+               'VOLUME', 'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT',
+               'EXIT PRICE', 'FINAL GAIN %']
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -306,7 +335,7 @@ class OperationsDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         self.table.setFont(QFont('monospace', 9))
         header = self.table.horizontalHeader()
-        for column in range(11):
+        for column in range(12):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemDoubleClicked.connect(self.on_edit_operation)
         self.table.cellClicked.connect(self.on_cell_clicked)
@@ -451,22 +480,30 @@ class OperationsDialog(QDialog):
 
         self.table.setItem(row, 5, self._numeric_item(self._fmt_price(entry_price), entry_price))
 
-        if volume is not None:
-            self.table.setItem(row, 6, self._numeric_item(self._fmt_price(volume), volume))
+        # the stop price: a light-red line on the asset's chart when set,
+        # empty (NULL) draws no line
+        stop_price = op.get('stop_price')
+        if stop_price is not None:
+            self.table.setItem(row, 6, self._numeric_item(self._fmt_price(stop_price), stop_price))
         else:
             self.table.setItem(row, 6, self._numeric_item('-', None))
+
+        if volume is not None:
+            self.table.setItem(row, 7, self._numeric_item(self._fmt_price(volume), volume))
+        else:
+            self.table.setItem(row, 7, self._numeric_item('-', None))
 
         leverage_text = str(op.get('leverage') or '').strip()
         if leverage_text:
             display = f"{lev:g}x" if lev else leverage_text
-            self.table.setItem(row, 7, self._numeric_item(display, lev))
-        else:
-            self.table.setItem(row, 7, self._numeric_item('-', None))
-
-        if current_price is not None:
-            self.table.setItem(row, 8, self._numeric_item(self._fmt_price(current_price), current_price))
+            self.table.setItem(row, 8, self._numeric_item(display, lev))
         else:
             self.table.setItem(row, 8, self._numeric_item('-', None))
+
+        if current_price is not None:
+            self.table.setItem(row, 9, self._numeric_item(self._fmt_price(current_price), current_price))
+        else:
+            self.table.setItem(row, 9, self._numeric_item('-', None))
 
         # NET GAIN %: the directional move without the leverage (1x) - the
         # same look as the leveraged GAIN % (green/red, plain for planned
@@ -476,12 +513,12 @@ class OperationsDialog(QDialog):
             if planned:
                 item = self._numeric_item(net_text, net_gain)
                 item.setToolTip("Planned operation - projected gain, not a real result")
-                self.table.setItem(row, 9, item)
+                self.table.setItem(row, 10, item)
             else:
                 color = LONG_COLOR if net_gain >= 0 else SHORT_COLOR
-                self.table.setItem(row, 9, self._colored_item(net_text, color, net_gain))
+                self.table.setItem(row, 10, self._colored_item(net_text, color, net_gain))
         else:
-            self.table.setItem(row, 9, self._numeric_item(net_text, None))
+            self.table.setItem(row, 10, self._numeric_item(net_text, None))
 
         gain_text = fmt_gain(gain)
         if gain is not None:
@@ -489,24 +526,24 @@ class OperationsDialog(QDialog):
                 # planned operation: the projected gain keeps the plain look
                 item = self._numeric_item(gain_text, gain)
                 item.setToolTip("Planned operation - projected gain, not a real result")
-                self.table.setItem(row, 10, item)
+                self.table.setItem(row, 11, item)
             else:
                 color = LONG_COLOR if gain >= 0 else SHORT_COLOR
-                self.table.setItem(row, 10, self._colored_item(gain_text, color, gain))
+                self.table.setItem(row, 11, self._colored_item(gain_text, color, gain))
         else:
-            self.table.setItem(row, 10, self._numeric_item(gain_text, None))
+            self.table.setItem(row, 11, self._numeric_item(gain_text, None))
 
-        self.table.setItem(row, 11, QTableWidgetItem(op.get('exit_date') or ''))
+        self.table.setItem(row, 12, QTableWidgetItem(op.get('exit_date') or ''))
         if exit_price is not None:
-            self.table.setItem(row, 12, self._numeric_item(self._fmt_price(exit_price), exit_price))
+            self.table.setItem(row, 13, self._numeric_item(self._fmt_price(exit_price), exit_price))
         else:
-            self.table.setItem(row, 12, QTableWidgetItem(''))
+            self.table.setItem(row, 13, QTableWidgetItem(''))
 
         if final_gain is not None:
             text = fmt_gain(final_gain)
             if closed and not planned:
                 color = LONG_COLOR if final_gain >= 0 else SHORT_COLOR
-                self.table.setItem(row, 13, self._colored_item(text, color, final_gain))
+                self.table.setItem(row, 14, self._colored_item(text, color, final_gain))
             else:
                 # open operation: the potential gain at the reference exit,
                 # plain (no background) while the operation runs; planned
@@ -514,9 +551,9 @@ class OperationsDialog(QDialog):
                 item = self._numeric_item(text, final_gain)
                 item.setToolTip("Potential gain at the reference exit price" if not planned
                                 else "Planned operation - projected gain, not a real result")
-                self.table.setItem(row, 13, item)
+                self.table.setItem(row, 14, item)
         else:
-            self.table.setItem(row, 13, self._numeric_item('-', None))
+            self.table.setItem(row, 14, self._numeric_item('-', None))
 
     def refresh(self):
         """Reload the list from the database into the current group tab
@@ -598,6 +635,10 @@ class OperationsDialog(QDialog):
         entries.append(('entry', op.get('entry_price'), entry_color))
         if op.get('exit_price') is not None:
             entries.append(('exit', op['exit_price'], EXIT_LINE))
+        # the stop line: light red, drawn only when the stop price is set
+        # (an empty stop adds no entry, so no line is drawn)
+        if op.get('stop_price') is not None:
+            entries.append(('stop', op['stop_price'], STOP_LINE))
         return [(kind, price, color) for kind, price, color in entries if price]
 
     def _sync_operation_lines(self, op_id, op):

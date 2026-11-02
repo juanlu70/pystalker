@@ -9,7 +9,8 @@ OPERATIONS (all the planned ones) and CLOSED OPERATIONS (done, not
 planned), each section with its title and count - a group flag lists one
 group alone. The columns: the entry date, the asset (its
 personalized name), the PAPER and PLANNED flags, Long/Short, entry price,
-volume, leverage, the current price (the last close stored in the
+the stop price (a light-red line is drawn on the asset's chart in the
+application when it is set), volume, leverage, the current price (the last close stored in the
 database), the NET GAIN % (the directional move without the leverage, the
 1x gain) and the leveraged GAIN % (green/red like the application, plain
 for planned operations whose gains are not real yet), the exit, the exit
@@ -41,9 +42,9 @@ RED = '\033[31m'
 BOLD = '\033[1m'
 RESET = '\033[0m'
 
-COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'VOLUME',
-           'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT', 'EXIT PRICE',
-           'FINAL GAIN %']
+COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'STOP',
+           'VOLUME', 'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT',
+           'EXIT PRICE', 'FINAL GAIN %']
 
 
 def gain_color(value):
@@ -146,6 +147,7 @@ def run(args):
                 'X' if r['planned'] else '-',
                 r['side'],
                 fmt_price(r['entry_price']) if r['entry_price'] is not None else '-',
+                fmt_price(r['stop_price']) if r['stop_price'] is not None else '-',
                 fmt_price(r['volume']) if r['volume'] is not None else '-',
                 f"{lev:g}x" if lev else (r['leverage'] if r['leverage'] else '-'),
                 fmt_price(r['current_price']) if r['current_price'] is not None else '-',
@@ -158,7 +160,7 @@ def run(args):
 
         widths = [max(len(COLUMNS[i]), max((len(row[i]) for row in plain_rows), default=0))
                   for i in range(len(COLUMNS))]
-        aligns = ['<', '<', '>', '>', '<', '>', '>', '>', '>', '>', '>', '<', '>', '>']
+        aligns = ['<', '<', '>', '>', '<', '>', '>', '>', '>', '>', '>', '>', '<', '>', '>']
 
         print(f"{title} ({len(section_rows)})")
         header = '  '.join(f"{COLUMNS[i]:{aligns[i]}{widths[i]}}" for i in range(len(COLUMNS)))
@@ -174,14 +176,14 @@ def run(args):
             # and the leveraged one), plain for planned operations (still only
             # a project, no real gains yet)
             if r['net_gain'] is not None and not r['planned']:
-                cells[9] = colored(cells[9], gain_color(r['net_gain']), use_color, bold=True)
+                cells[10] = colored(cells[10], gain_color(r['net_gain']), use_color, bold=True)
             if r['gain'] is not None and not r['planned']:
-                cells[10] = colored(cells[10], gain_color(r['gain']), use_color, bold=True)
+                cells[11] = colored(cells[11], gain_color(r['gain']), use_color, bold=True)
             # FINAL GAIN %: colored for real closed operations (the leveraged
             # gain at the exit price, identical to GAIN % there); plain for the
             # potential gain of open ones and the projected gain of planned ones
             if r['final_gain'] is not None and not r['open'] and not r['planned']:
-                cells[13] = colored(cells[13], gain_color(r['final_gain']), use_color, bold=True)
+                cells[14] = colored(cells[14], gain_color(r['final_gain']), use_color, bold=True)
             print('  '.join(cells))
         print()
 

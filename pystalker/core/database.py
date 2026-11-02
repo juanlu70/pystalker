@@ -82,7 +82,8 @@ class Database:
                 exit_price REAL,
                 exit_date TEXT,
                 "open" INTEGER NOT NULL DEFAULT 1,
-                planned INTEGER NOT NULL DEFAULT 0
+                planned INTEGER NOT NULL DEFAULT 0,
+                stop_price REAL
             )
         ''')
 
@@ -101,6 +102,10 @@ class Database:
         # start (its gains are shown without the green/red colors)
         if 'planned' not in existing_columns:
             cursor.execute('ALTER TABLE operations ADD COLUMN planned INTEGER NOT NULL DEFAULT 0')
+        # stop: the stop-loss price - a light-red line is drawn on the
+        # asset's chart when it is set, no line when it is empty (NULL)
+        if 'stop_price' not in existing_columns:
+            cursor.execute('ALTER TABLE operations ADD COLUMN stop_price REAL')
 
         self.conn.commit()
         
@@ -713,8 +718,8 @@ class Database:
         cursor.execute('''
             INSERT INTO operations
                 (bot, market, paper, asset, side, entry_price, volume, leverage,
-                 entry_date, exit_price, exit_date, "open", planned)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 entry_date, exit_price, exit_date, "open", planned, stop_price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
               1 if op.get('paper') else 0, op.get('asset', ''),
               op.get('side', 'Long'), float(op.get('entry_price') or 0),
@@ -723,7 +728,8 @@ class Database:
               float(op['exit_price']) if op.get('exit_price') else None,
               op.get('exit_date') or None,
               1 if op.get('open', True) else 0,
-              1 if op.get('planned') else 0))
+              1 if op.get('planned') else 0,
+              float(op['stop_price']) if op.get('stop_price') else None))
         self.conn.commit()
         return cursor.lastrowid
 
@@ -734,7 +740,8 @@ class Database:
             UPDATE operations SET
                 bot = ?, market = ?, paper = ?, asset = ?, side = ?,
                 entry_price = ?, volume = ?, leverage = ?, entry_date = ?,
-                exit_price = ?, exit_date = ?, "open" = ?, planned = ?
+                exit_price = ?, exit_date = ?, "open" = ?, planned = ?,
+                stop_price = ?
             WHERE id = ?
         ''', (op.get('bot', 'No bot'), op.get('market', 'Spot'),
               1 if op.get('paper') else 0, op.get('asset', ''),
@@ -744,7 +751,9 @@ class Database:
               float(op['exit_price']) if op.get('exit_price') else None,
               op.get('exit_date') or None,
               1 if op.get('open', True) else 0,
-              1 if op.get('planned') else 0, op_id))
+              1 if op.get('planned') else 0,
+              float(op['stop_price']) if op.get('stop_price') else None,
+              op_id))
         self.conn.commit()
 
     def delete_operation(self, op_id: int):
@@ -757,9 +766,11 @@ class Database:
         """All trading operations, oldest entry first."""
         cursor = self.conn.cursor()
         cursor.execute('SELECT id, bot, market, paper, asset, side, entry_price, volume, leverage, '
-                       'entry_date, exit_price, exit_date, "open", planned FROM operations ORDER BY entry_date')
+                       'entry_date, exit_price, exit_date, "open", planned, stop_price '
+                       'FROM operations ORDER BY entry_date')
         columns = ['id', 'bot', 'market', 'paper', 'asset', 'side', 'entry_price', 'volume',
-                   'leverage', 'entry_date', 'exit_price', 'exit_date', 'open', 'planned']
+                   'leverage', 'entry_date', 'exit_price', 'exit_date', 'open', 'planned',
+                   'stop_price']
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def save_data_source(self, symbol: str, source: str):

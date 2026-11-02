@@ -7,6 +7,10 @@ import warnings
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
+# the project's supertrend parameters (period 10, multiplier 1.8) - one
+# source for the scanner, the CLI and the chart indicator
+from .supertrend import SUPERTREND_MULTIPLIER, SUPERTREND_PERIOD
+
 try:
     import talib
     TALIB_AVAILABLE = True
@@ -54,7 +58,7 @@ class IndicatorManager:
         'EMA': {'func': 'EMA', 'params': {'period': 20}, 'type': Indicator.OVERLAY},
         'BBANDS': {'func': 'BBANDS', 'params': {'period': 20, 'nbdevup': 2, 'nbdevdn': 2}, 'type': Indicator.OVERLAY},
         'SAR': {'func': 'SAR', 'params': {'acceleration': 0.02, 'maximum': 0.2}, 'type': Indicator.OVERLAY},
-        'SuperTrend': {'func': 'SUPERTREND', 'params': {'period': 10, 'multiplier': 3.0}, 'type': Indicator.OVERLAY},
+        'SuperTrend': {'func': 'SUPERTREND', 'params': {'period': SUPERTREND_PERIOD, 'multiplier': SUPERTREND_MULTIPLIER}, 'type': Indicator.OVERLAY},
         'Donchian': {'func': 'DONCHIAN', 'params': {'period': 20}, 'type': Indicator.OVERLAY},
         'ML Predict (Random Forest)': {'func': 'ML_PREDICT_RF', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
         'ML Predict (XGBoost)': {'func': 'ML_PREDICT_XGB', 'params': {'lookback': 200, 'horizon': 5}, 'type': Indicator.OVERLAY},
@@ -89,11 +93,14 @@ class IndicatorManager:
             {'name': 'Lower', 'color': '#95E1D3'},
         ],
         'SAR': [{'name': 'SAR', 'color': '#00CED1'}],
+        # the user's palette, and the Up/Down trend lines hidden by default
+        # (the "Visible" checkbox of the Add Indicator dialog starts
+        # unchecked for them - re-enable there or in Edit Indicators)
         'SuperTrend': [
-            {'name': 'Up', 'color': '#00FF7F'},
-            {'name': 'Down', 'color': '#FF6B6B'},
-            {'name': 'Upper', 'color': '#FF6B6B'},
-            {'name': 'Lower', 'color': '#4ECDC4'},
+            {'name': 'Up', 'color': '#55FF00', 'visible': False},    # RGB(85,255,0)
+            {'name': 'Down', 'color': '#FF0000', 'visible': False},   # RGB(255,0,0)
+            {'name': 'Upper', 'color': '#55FF7F', 'visible': True},   # RGB(85,255,127)
+            {'name': 'Lower', 'color': '#FF557F', 'visible': True},   # RGB(255,85,127)
         ],
         'Donchian': [
             {'name': 'Upper', 'color': '#FF6B6B'},
@@ -316,8 +323,8 @@ class IndicatorManager:
 
 
 def _calculate_supertrend(data: pd.DataFrame, params: dict, line_colors: dict) -> Indicator:
-    period = int(params.get('period', 10))
-    multiplier = float(params.get('multiplier', 3.0))
+    period = int(params.get('period', SUPERTREND_PERIOD))
+    multiplier = float(params.get('multiplier', SUPERTREND_MULTIPLIER))
     
     high = data['High'].values.astype(float)
     low = data['Low'].values.astype(float)
@@ -400,19 +407,19 @@ def _calculate_supertrend(data: pd.DataFrame, params: dict, line_colors: dict) -
     indicator.parameters = params
     indicator.add_line(PlotLine(
         f'Up({period},{multiplier})', supertrend_up,
-        line_colors.get('Up', '#00FF7F')
+        line_colors.get('Up', '#55FF00')      # RGB(85,255,0)
     ))
     indicator.add_line(PlotLine(
         f'Down({period},{multiplier})', supertrend_down,
-        line_colors.get('Down', '#FF6B6B')
+        line_colors.get('Down', '#FF0000')     # RGB(255,0,0)
     ))
     indicator.add_line(PlotLine(
         'Upper', upper_band,
-        line_colors.get('Upper', '#FF6B6B')
+        line_colors.get('Upper', '#55FF7F')    # RGB(85,255,127)
     ))
     indicator.add_line(PlotLine(
         'Lower', lower_band,
-        line_colors.get('Lower', '#4ECDC4')
+        line_colors.get('Lower', '#FF557F')    # RGB(255,85,127)
     ))
     
     return indicator
