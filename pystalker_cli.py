@@ -3,11 +3,11 @@
 pystalker_cli.py - The unified PyStalker command-line tool
 
 One self-contained program: every console tool the CLI executes is
-integrated in this file as a command (operations, update, scanner, list).
-The console_programs/ directory keeps only the tools the CLI does not
-run - the volatility prediction/accuracy suite, the bar-fixing tools and
-prob_target; the scanning logic itself lives in pystalker/core/ and is
-shared with the application.
+integrated in this file as a command (operations, update, scanner,
+status, list). The console_programs/ directory keeps only the tools the
+CLI does not run - the volatility prediction/accuracy suite, the
+bar-fixing tools and prob_target; the scanning logic itself lives in
+pystalker/core/ and is shared with the application.
 
   operations   The trading journal (the Trading -> Operations list):
                the operations with their gains (green/red like the
@@ -29,6 +29,19 @@ shared with the application.
     --channels/--supertrend/--all --db --max-proximity --asset
     --lower-than(channels) --period/--multiplier(supertrend) --no-color
 
+  status       The per-asset snapshot, one row per asset sorted by its
+               display name: the last close (green when it went up
+               since the previous bar, red when it went down), the last
+               update date (when the shown data was last refreshed),
+               the nearest drawn channel (its kind + the percentage
+               distances to the upper and lower lines) with the CH BREAK
+               column (the line the close went beyond), and the
+               supertrend bands (the percentage distances to the Up
+               line - the support below the price - and the Down line -
+               the resistance above) with the ST BREAK column (the band
+               the close went beyond); '-' marks what does not apply.
+    --db --asset --period --multiplier --no-color
+
   list         The assets of an exchange - the second argument is the
                exchange: "list phemex" or "list pionex".
     --search --type --quote(phemex) --all
@@ -43,6 +56,8 @@ Usage:
   python pystalker_cli.py scanner --channels
   python pystalker_cli.py scanner --supertrend --multiplier 3
   python pystalker_cli.py scanner --all --asset BTC-USD --max-proximity 5
+  python pystalker_cli.py status
+  python pystalker_cli.py status --asset BTC-USD
   python pystalker_cli.py list phemex --search Tesla
   python pystalker_cli.py list pionex --type perp
 
@@ -57,14 +72,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))          # the pystalker package imports
 
-from pystalker.core.channel_scanner import scan_channel_proximity
+from pystalker.core.channel_scanner import (evaluate_channel, get_assets,
+                                            get_source_symbol, load_channels,
+                                            scan_channel_proximity)
 from pystalker.core.database import Database
 from pystalker.core.operations import (fmt_gain, fmt_price, get_display_name,
                                        list_operations)
 from pystalker.core.providers import (PHEMEX_CATEGORY_LABELS, DataManager,
                                       PhemexProvider, PionexProvider)
 from pystalker.core.supertrend import (SUPERTREND_MULTIPLIER, SUPERTREND_PERIOD,
-                                       scan_supertrend)
+                                       load_bars, scan_supertrend, supertrend)
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
 
@@ -692,6 +709,214 @@ def run_scanner(args):
                          names_supertrend, args)
 
 
+# === status: the per-asset snapshot ========================================
+# One row per asset (sorted by its display name): the last close colored
+# by its daily move (green when it went up since the previous bar, red
+# when it went down, plain when it did not move or there is no previous
+# bar), the last update date (when the shown data was last refreshed -
+# the source asset's row for copies), the nearest drawn channel (its
+# kind and the percentage distances to the upper and lower lines), the
+# CHANNEL BREAK (the line the close went beyond: Upper or Lower, the
+# established green/red coding), the supertrend bands (the percentage
+# distances to the Up line - the support below the price - and the Down
+# line - the resistance above it) and the SUPERTREND BREAK (the band the
+# close went beyond). '-' marks what does not apply (never updated, no
+# channel, or too few bars for the supertrend's warm-up); assets without
+# any bars are listed in the Skipped note.
+
+def _distance_pct(close, line_value):
+    """The percentage distance of the close from a line value (relative to
+    the line's value, the scanner convention); inf for a ~zero line."""
+    if abs(line_value) < 1e-12:
+        return float('inf')
+    return abs(close - line_value) / abs(line_value) * 100.0
+
+
+def _nearest_channel(conn, symbol, close, n_bars):
+    """The asset's nearest channel evaluation (the closest of its upper
+    and lower lines, the by-asset view's convention), None when the
+    asset has no usable channel drawing."""
+    best = None
+    for channel in load_channels(conn, symbol):
+        ev = evaluate_channel(channel, close, n_bars)
+        if ev is None:
+            continue
+        distance = min(_distance_pct(close, ev['lower']),
+                       _distance_pct(close, ev['upper']))
+        if best is None or distance < best[0]:
+            best = (distance, ev)
+    return best[1] if best else None
+
+
+def build_status_parser(parser):
+    """The status command's flags."""
+    parser.add_argument('--db', default=DB_DEFAULT, help=f"path to the database (default: {DB_DEFAULT})")
+    parser.add_argument('--asset', default=None,
+                        help="show a single asset instead of all")
+    parser.add_argument('--period', type=int, default=SUPERTREND_PERIOD,
+                        help=f"the ATR period of the supertrend (default: {SUPERTREND_PERIOD})")
+    parser.add_argument('--multiplier', type=float, default=SUPERTREND_MULTIPLIER,
+                        help=f"the supertrend multiplier (default: {SUPERTREND_MULTIPLIER:g})")
+    parser.add_argument('--no-color', action='store_true', help="plain text without ANSI colors")
+
+
+def run_status(args):
+
+    if not Path(args.db).exists():
+        print(f"Database not found: {args.db}")
+        sys.exit(1)
+
+    use_color = not args.no_color
+    conn = sqlite3.connect(args.db)
+
+    rows, skipped = [], []
+    for symbol in get_assets(conn):
+        if args.asset is not None and symbol != args.asset:
+            continue
+        bars_symbol = get_source_symbol(conn, symbol) or symbol
+        high, low, close, n_bars = load_bars(conn, bars_symbol)
+        if n_bars == 0:
+            skipped.append(f"{symbol}: no price data"
+                           + (f" (source {bars_symbol})" if bars_symbol != symbol else ""))
+            continue
+        last_close = float(close[-1])
+        prev_close = float(close[-2]) if n_bars >= 2 else None
+        # the last update date: when the shown data was last refreshed -
+        # the source asset's row for copies (their bars come from it)
+        updated = '-'
+        row = conn.execute('SELECT last_updated FROM symbols WHERE symbol = ?',
+                           (bars_symbol,)).fetchone()
+        if row and row[0]:
+            updated = datetime.fromtimestamp(int(row[0])).strftime('%Y-%m-%d')
+        # the daily move: True up, False down, None flat or unknown
+        daily_move = None
+        if prev_close is not None:
+            if last_close > prev_close:
+                daily_move = True
+            elif last_close < prev_close:
+                daily_move = False
+
+        # the nearest drawn channel and its two line distances
+        channel = _nearest_channel(conn, symbol, last_close, n_bars)
+        ch_upper = _distance_pct(last_close, channel['upper']) if channel else None
+        ch_lower = _distance_pct(last_close, channel['lower']) if channel else None
+        # the channel break: the close is beyond the shown channel's
+        # upper or lower line
+        ch_break = None
+        if channel and channel['status'] == 'broken':
+            ch_break = channel['broken_line']
+
+        # the supertrend bands: the Up line (the support below the price,
+        # the lower band) and the Down line (the resistance above it)
+        st_up = st_down = st_break = None
+        if n_bars >= args.period + 2:
+            direction, line, flip, lower_band, upper_band = supertrend(
+                high, low, close, args.period, args.multiplier)
+            t = n_bars - 1
+            if direction[t] != 0:
+                support, resistance = float(lower_band[t]), float(upper_band[t])
+                st_up = _distance_pct(last_close, support)
+                st_down = _distance_pct(last_close, resistance)
+                # the supertrend range break: the close is beyond one of
+                # the bands
+                if last_close > resistance:
+                    st_break = 'Upper'
+                elif last_close < support:
+                    st_break = 'Lower'
+
+        rows.append({
+            'symbol': symbol,
+            'name': get_display_name(conn, symbol) or symbol,
+            'close': last_close,
+            'updated': updated,
+            'up': daily_move,
+            'channel': channel,
+            'ch_upper': ch_upper, 'ch_lower': ch_lower,
+            'ch_break': ch_break,
+            'st_up': st_up, 'st_down': st_down,
+            'st_break': st_break,
+        })
+    conn.close()
+
+    rows.sort(key=lambda r: (r['name'].casefold(), r['symbol']))
+
+    print(f"Report generated: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print("Status - the last close colored by its daily move (green up, red down),")
+    print("the channel and the supertrend line distances")
+    print(f"Parameters: period {args.period}, multiplier {args.multiplier:g} | "
+          f"{len(rows)} asset(s)\n")
+
+    if not rows:
+        if args.asset is not None and not skipped:
+            print(f"Asset not found in the database: {args.asset}")
+        else:
+            print("No assets in the database")
+    else:
+        def cell(value):
+            return f"{value:.2f}%" if value is not None and value != float('inf') else '-'
+
+        headers = ['ASSET', 'CLOSE', 'LAST UPDATE', 'CHANNEL', 'TO UPPER',
+                   'TO LOWER', 'CH BREAK', 'TO UP LINE', 'TO DOWN LINE',
+                   'ST BREAK']
+        aligns = ['<', '>', '<', '<', '>', '>', '<', '>', '>', '<']
+        plain = [(r['name'], fmt_price(r['close']), r['updated'],
+                  r['channel']['kind'] if r['channel'] else '-',
+                  cell(r['ch_upper']), cell(r['ch_lower']),
+                  r['ch_break'] or '-',
+                  cell(r['st_up']), cell(r['st_down']),
+                  r['st_break'] or '-')
+                 for r in rows]
+        widths = [max(len(headers[i]), max((len(p[i]) for p in plain), default=0))
+                  for i in range(len(headers))]
+
+        header = '  '.join(f"{headers[i]:{aligns[i]}{widths[i]}}"
+                          for i in range(len(headers)))
+        print(header)
+        for r, p in zip(rows, plain):
+            # pad first, colorize after: the f-string widths would count the
+            # invisible ANSI escape characters otherwise
+            cells = [f"{p[i]:{aligns[i]}{widths[i]}}" for i in range(len(headers))]
+            # CLOSE: green when the daily move went up, red when down, plain
+            # when it did not move or there is no previous bar
+            close_color = None
+            if r['up'] is True:
+                close_color = GREEN
+            elif r['up'] is False:
+                close_color = RED
+            cells[1] = colored(cells[1], close_color, use_color)
+            # LAST UPDATE stays plain (cells[2]); CHANNEL: the established
+            # coding (Ascending green, Descending red)
+            kind_color = None
+            if r['channel']:
+                kind_color = GREEN if r['channel']['kind'] == 'Ascending' else RED
+            cells[3] = colored(cells[3], kind_color, use_color)
+            # CH BREAK / ST BREAK: beyond the upper line green, beyond the
+            # lower line red (the established coding); '-' stays plain
+            ch_break_color = None
+            if r['ch_break'] == 'Upper':
+                ch_break_color = GREEN
+            elif r['ch_break'] == 'Lower':
+                ch_break_color = RED
+            cells[6] = colored(cells[6], ch_break_color, use_color)
+            # the supertrend distances: the Up line green, the Down line red
+            cells[7] = colored(cells[7], GREEN if r['st_up'] is not None else None,
+                               use_color)
+            cells[8] = colored(cells[8], RED if r['st_down'] is not None else None,
+                               use_color)
+            st_break_color = None
+            if r['st_break'] == 'Upper':
+                st_break_color = GREEN
+            elif r['st_break'] == 'Lower':
+                st_break_color = RED
+            cells[9] = colored(cells[9], st_break_color, use_color)
+            print('  '.join(cells))
+
+    if skipped:
+        print("\nSkipped:")
+        for s in skipped:
+            print(f"  {s}")
+
+
 # === list: the exchange product listings ====================================
 # The assets of an exchange, fetched live from its public API with the
 # same providers the application uses (pystalker/core/providers.py), so
@@ -888,7 +1113,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='pystalker_cli.py',
         description="The unified PyStalker command-line tool "
-                    "(operations, update, scanner, list)")
+                    "(operations, update, scanner, status, list)")
     sub = parser.add_subparsers(dest='command', metavar='command')
 
     operations = sub.add_parser('operations',
@@ -906,6 +1131,13 @@ def main(argv=None):
                                   "(default: both)")
     build_scanner_parser(scanner)
     scanner.set_defaults(func=run_scanner)
+
+    status = sub.add_parser(
+        'status',
+        help="the last close, last update date, channel and supertrend "
+             "distances of every asset")
+    build_status_parser(status)
+    status.set_defaults(func=run_status)
 
     # list: the second argument is the exchange
     list_parser = sub.add_parser('list',
