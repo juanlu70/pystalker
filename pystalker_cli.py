@@ -31,16 +31,22 @@ pystalker/core/ and is shared with the application.
 
   status       The per-asset snapshot, one row per asset sorted by its
                display name: the last close (green when it went up
-               since the previous bar, red when it went down), the last
-               update date (when the shown data was last refreshed),
-               the nearest drawn channel (its kind + the percentage
+               since the previous bar, red when it went down) with the
+               DAY % column (the percent change along the day) and the
+               WEEK % column next to it (the percent change along the
+               last week), both colored the same way, the last update
+               date (when the shown data was last refreshed), the
+               nearest drawn channel (its kind + the percentage
                distances to the upper and lower lines) with the CH BREAK
                column (the line the close went beyond), and the
                supertrend bands (the percentage distances to the Up
                line - the support below the price - and the Down line -
                the resistance above) with the ST BREAK column (the band
                the close went beyond); '-' marks what does not apply.
-    --db --asset --period --multiplier --no-color
+               --date YYYY-MM-DD shows the status as of a past date
+               (the last bar on or before it, with its own daily and
+               weekly changes, channel and supertrend).
+    --db --asset --date --period --multiplier --no-color
 
   list         The assets of an exchange - the second argument is the
                exchange: "list phemex" or "list pionex".
@@ -69,6 +75,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))          # the pystalker package imports
 
@@ -81,7 +89,7 @@ from pystalker.core.operations import (fmt_gain, fmt_price, get_display_name,
 from pystalker.core.providers import (PHEMEX_CATEGORY_LABELS, DataManager,
                                       PhemexProvider, PionexProvider)
 from pystalker.core.supertrend import (SUPERTREND_MULTIPLIER, SUPERTREND_PERIOD,
-                                       load_bars, scan_supertrend, supertrend)
+                                        scan_supertrend, supertrend)
 
 DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
 
@@ -713,16 +721,51 @@ def run_scanner(args):
 # One row per asset (sorted by its display name): the last close colored
 # by its daily move (green when it went up since the previous bar, red
 # when it went down, plain when it did not move or there is no previous
-# bar), the last update date (when the shown data was last refreshed -
-# the source asset's row for copies), the nearest drawn channel (its
-# kind and the percentage distances to the upper and lower lines), the
-# CHANNEL BREAK (the line the close went beyond: Upper or Lower, the
-# established green/red coding), the supertrend bands (the percentage
-# distances to the Up line - the support below the price - and the Down
-# line - the resistance above it) and the SUPERTREND BREAK (the band the
-# close went beyond). '-' marks what does not apply (never updated, no
-# channel, or too few bars for the supertrend's warm-up); assets without
-# any bars are listed in the Skipped note.
+# bar) with the DAY % column - the percent change along the day - and the
+# WEEK % column next to it - the percent change along the last week (vs
+# the last close at least 7 days older), both colored the same way; the
+# last update date (when the shown data was last refreshed - the source
+# asset's row for copies), the nearest drawn channel (its kind and the
+# percentage distances to the upper and lower lines), the CHANNEL BREAK
+# (the line the close went beyond: Upper or Lower, the established
+# green/red coding), the supertrend bands (the percentage distances to
+# the Up line - the support below the price - and the Down line - the
+# resistance above it) and the SUPERTREND BREAK (the band the close went
+# beyond). '-' marks what does not apply (never updated, no channel, or
+# too few bars for the supertrend's warm-up); assets without any bars
+# are listed in the Skipped note.
+#
+# --date YYYY-MM-DD shows the status AS OF a past date: only the bars up
+# to that date, so the close, the daily and weekly changes, the channel
+# lines (drawings are anchored at bar positions) and the supertrend bands
+# are all evaluated at that moment of the history.
+
+def _date_arg(text):
+    """The --date flag's value: a YYYY-MM-DD date."""
+    try:
+        datetime.strptime(text, '%Y-%m-%d')
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"the date must be YYYY-MM-DD (got {text!r})")
+    return text
+
+
+def _load_status_bars(conn, symbol):
+    """(timestamps, highs, lows, closes) of the asset's daily bars in
+    stored order, as numpy arrays - the status needs the timestamps (the
+    week window, the --date cutoff) on top of the supertrend's arrays;
+    empty arrays when the asset has no bars table."""
+    try:
+        cur = conn.cursor()
+        cur.execute(f'SELECT timestamp, high, low, close FROM "{symbol}_bars" '
+                     f'ORDER BY timestamp')
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    if not rows:
+        return np.array([]), np.array([]), np.array([]), np.array([])
+    data = np.array(rows, dtype=float)
+    return data[:, 0], data[:, 1], data[:, 2], data[:, 3]
 
 def _distance_pct(close, line_value):
     """The percentage distance of the close from a line value (relative to
@@ -753,6 +796,10 @@ def build_status_parser(parser):
     parser.add_argument('--db', default=DB_DEFAULT, help=f"path to the database (default: {DB_DEFAULT})")
     parser.add_argument('--asset', default=None,
                         help="show a single asset instead of all")
+    parser.add_argument('--date', default=None, type=_date_arg, metavar='YYYY-MM-DD',
+                        help="show the status as of this past date (the last bar on "
+                             "or before it, with its own daily and weekly changes, "
+                             "channel and supertrend)")
     parser.add_argument('--period', type=int, default=SUPERTREND_PERIOD,
                         help=f"the ATR period of the supertrend (default: {SUPERTREND_PERIOD})")
     parser.add_argument('--multiplier', type=float, default=SUPERTREND_MULTIPLIER,
@@ -769,17 +816,30 @@ def run_status(args):
     use_color = not args.no_color
     conn = sqlite3.connect(args.db)
 
+    # --date: the status as of a past date - only the bars strictly before
+    # the end of that date (None = today, the whole history)
+    cutoff = None
+    if args.date is not None:
+        cutoff = datetime.strptime(args.date, '%Y-%m-%d').timestamp() + 86400
+
     rows, skipped = [], []
     for symbol in get_assets(conn):
         if args.asset is not None and symbol != args.asset:
             continue
         bars_symbol = get_source_symbol(conn, symbol) or symbol
-        high, low, close, n_bars = load_bars(conn, bars_symbol)
+        timestamps, high, low, close = _load_status_bars(conn, bars_symbol)
+        if cutoff is not None:
+            keep = timestamps < cutoff
+            timestamps, high, low, close = (timestamps[keep], high[keep],
+                                            low[keep], close[keep])
+        n_bars = len(close)
         if n_bars == 0:
             skipped.append(f"{symbol}: no price data"
+                           + (f" up to {args.date}" if args.date else "")
                            + (f" (source {bars_symbol})" if bars_symbol != symbol else ""))
             continue
         last_close = float(close[-1])
+        last_ts = float(timestamps[-1])
         prev_close = float(close[-2]) if n_bars >= 2 else None
         # the last update date: when the shown data was last refreshed -
         # the source asset's row for copies (their bars come from it)
@@ -788,9 +848,21 @@ def run_status(args):
                            (bars_symbol,)).fetchone()
         if row and row[0]:
             updated = datetime.fromtimestamp(int(row[0])).strftime('%Y-%m-%d')
+        # the daily percent change (the same move that colors the close)
+        change = None
+        if prev_close:
+            change = (last_close - prev_close) / prev_close * 100.0
+        # the weekly percent change: vs the last close at least 7 days
+        # older than the as-of bar
+        week_change = None
+        older = timestamps <= (last_ts - 7 * 86400)
+        if older.any():
+            week_close = float(close[older][-1])
+            if week_close:
+                week_change = (last_close - week_close) / week_close * 100.0
         # the daily move: True up, False down, None flat or unknown
         daily_move = None
-        if prev_close is not None:
+        if prev_close:
             if last_close > prev_close:
                 daily_move = True
             elif last_close < prev_close:
@@ -829,6 +901,8 @@ def run_status(args):
             'name': get_display_name(conn, symbol) or symbol,
             'close': last_close,
             'updated': updated,
+            'change': change,
+            'week': week_change,
             'up': daily_move,
             'channel': channel,
             'ch_upper': ch_upper, 'ch_lower': ch_lower,
@@ -844,22 +918,26 @@ def run_status(args):
     print("Status - the last close colored by its daily move (green up, red down),")
     print("the channel and the supertrend line distances")
     print(f"Parameters: period {args.period}, multiplier {args.multiplier:g} | "
-          f"{len(rows)} asset(s)\n")
+          f"{len(rows)} asset(s)"
+          + (f" | as of {args.date}" if args.date else "") + "\n")
 
     if not rows:
         if args.asset is not None and not skipped:
             print(f"Asset not found in the database: {args.asset}")
+        elif args.date is not None:
+            print(f"No asset has price data up to {args.date}")
         else:
             print("No assets in the database")
     else:
         def cell(value):
             return f"{value:.2f}%" if value is not None and value != float('inf') else '-'
 
-        headers = ['ASSET', 'CLOSE', 'LAST UPDATE', 'CHANNEL', 'TO UPPER',
-                   'TO LOWER', 'CH BREAK', 'TO UP LINE', 'TO DOWN LINE',
-                   'ST BREAK']
-        aligns = ['<', '>', '<', '<', '>', '>', '<', '>', '>', '<']
-        plain = [(r['name'], fmt_price(r['close']), r['updated'],
+        headers = ['ASSET', 'CLOSE', 'DAY %', 'WEEK %', 'LAST UPDATE', 'CHANNEL',
+                   'TO UPPER', 'TO LOWER', 'CH BREAK', 'TO UP LINE',
+                   'TO DOWN LINE', 'ST BREAK']
+        aligns = ['<', '>', '>', '>', '<', '<', '>', '>', '<', '>', '>', '<']
+        plain = [(r['name'], fmt_price(r['close']), fmt_gain(r['change']),
+                  fmt_gain(r['week']), r['updated'],
                   r['channel']['kind'] if r['channel'] else '-',
                   cell(r['ch_upper']), cell(r['ch_lower']),
                   r['ch_break'] or '-',
@@ -876,20 +954,29 @@ def run_status(args):
             # pad first, colorize after: the f-string widths would count the
             # invisible ANSI escape characters otherwise
             cells = [f"{p[i]:{aligns[i]}{widths[i]}}" for i in range(len(headers))]
-            # CLOSE: green when the daily move went up, red when down, plain
-            # when it did not move or there is no previous bar
+            # CLOSE and DAY %: green when the daily move went up, red when
+            # down, plain when it did not move or there is no previous bar
             close_color = None
             if r['up'] is True:
                 close_color = GREEN
             elif r['up'] is False:
                 close_color = RED
             cells[1] = colored(cells[1], close_color, use_color)
-            # LAST UPDATE stays plain (cells[2]); CHANNEL: the established
+            cells[2] = colored(cells[2], close_color, use_color)
+            # WEEK %: colored by its own sign (green up, red down, plain flat)
+            week_color = None
+            if r['week'] is not None:
+                if r['week'] > 0:
+                    week_color = GREEN
+                elif r['week'] < 0:
+                    week_color = RED
+            cells[3] = colored(cells[3], week_color, use_color)
+            # LAST UPDATE stays plain (cells[4]); CHANNEL: the established
             # coding (Ascending green, Descending red)
             kind_color = None
             if r['channel']:
                 kind_color = GREEN if r['channel']['kind'] == 'Ascending' else RED
-            cells[3] = colored(cells[3], kind_color, use_color)
+            cells[5] = colored(cells[5], kind_color, use_color)
             # CH BREAK / ST BREAK: beyond the upper line green, beyond the
             # lower line red (the established coding); '-' stays plain
             ch_break_color = None
@@ -897,18 +984,18 @@ def run_status(args):
                 ch_break_color = GREEN
             elif r['ch_break'] == 'Lower':
                 ch_break_color = RED
-            cells[6] = colored(cells[6], ch_break_color, use_color)
+            cells[8] = colored(cells[8], ch_break_color, use_color)
             # the supertrend distances: the Up line green, the Down line red
-            cells[7] = colored(cells[7], GREEN if r['st_up'] is not None else None,
+            cells[9] = colored(cells[9], GREEN if r['st_up'] is not None else None,
                                use_color)
-            cells[8] = colored(cells[8], RED if r['st_down'] is not None else None,
-                               use_color)
+            cells[10] = colored(cells[10], RED if r['st_down'] is not None else None,
+                                use_color)
             st_break_color = None
             if r['st_break'] == 'Upper':
                 st_break_color = GREEN
             elif r['st_break'] == 'Lower':
                 st_break_color = RED
-            cells[9] = colored(cells[9], st_break_color, use_color)
+            cells[11] = colored(cells[11], st_break_color, use_color)
             print('  '.join(cells))
 
     if skipped:
@@ -1134,8 +1221,8 @@ def main(argv=None):
 
     status = sub.add_parser(
         'status',
-        help="the last close, last update date, channel and supertrend "
-             "distances of every asset")
+        help="the last close with its daily change, last update date, "
+             "channel and supertrend distances of every asset")
     build_status_parser(status)
     status.set_defaults(func=run_status)
 
