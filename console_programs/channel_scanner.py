@@ -106,9 +106,13 @@ def print_channel_report(res, names, args):
 
     use_color = not args.no_color
     price_filter = f" - price <= {args.lower_than:g}" if args.lower_than is not None else ""
+    # the date of the data in the title (the --date day, or the scan's
+    # day): among all the data, every section's title identifies itself
+    date_str = (getattr(args, 'date', None)
+                or res['generated'].strftime('%Y-%m-%d'))
     print(f"Report generated: {res['generated'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print(f"Channel scanner - assets with price within {args.max_proximity:g}% of a channel"
-          f" line{price_filter}")
+    print(f"Channel scanner {date_str} - assets with price within "
+          f"{args.max_proximity:g}% of a channel line{price_filter}")
     print(f"Scanned {scanned} asset(s) with channel drawings\n")
 
     if near_results:

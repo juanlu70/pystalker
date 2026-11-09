@@ -18,13 +18,33 @@ Every command keeps the flags of its original program:
   scanner      The fused scanner: the channel scanner and the supertrend
                scanner in one command - the drawn channels (near a line,
                broken) and/or the supertrend indicator (touching the
-               line, trend flips); bare or --all scans both at once and
-               appends the both-scans-by-asset view (each asset's two
-               conditions side by side, sorted by asset name, with the
-               both/only-one counts); --channels or --supertrend scans
-               one alone.
+               line, trend flips, opens outside the band range); bare or
+               --all scans both at once and appends the both-scans-by-asset
+               view (each asset's two conditions side by side, sorted by
+               asset name, with the both/only-one counts); --channels or
+               --supertrend scans one alone.
     --channels/--supertrend/--all --db --max-proximity --asset
-    --lower-than(channels) --period/--multiplier(supertrend) --no-color
+    --date(both scans as of a past day) --lower-than(channels)
+    --period/--multiplier(supertrend) --no-color
+
+  status       The per-asset snapshot, one row per asset sorted by its
+               display name: the last close (green when it went up
+               since the previous bar, red when it went down) with the
+               DAY % column (the percent change along the day) and the
+               WEEK % column next to it (the percent change along the
+               last week), both colored the same way, the last update
+               date (when the shown data was last refreshed), the
+               nearest drawn channel (its kind + the percentage
+               distances to the upper and lower lines) with the CH BREAK
+               column (the line the close went beyond), and the
+               supertrend bands (the percentage distances to the Up
+               line - the support below the price - and the Down line -
+               the resistance above) with the ST BREAK column (the band
+               the close went beyond); '-' marks what does not apply.
+               --date YYYY-MM-DD shows the status as of a past date
+               (the last bar on or before it, with its own daily and
+               weekly changes, channel and supertrend).
+    --db --asset --date --period --multiplier --no-color
 
   list         The assets of an exchange - the second argument is the
                exchange: "list phemex" or "list pionex".
@@ -40,6 +60,9 @@ Usage:
   python pystalker_cli.py scanner --channels
   python pystalker_cli.py scanner --supertrend --multiplier 3
   python pystalker_cli.py scanner --all --asset BTC-USD --max-proximity 5
+  python pystalker_cli.py status
+  python pystalker_cli.py status --asset BTC-USD
+  python pystalker_cli.py status --date 2026-11-04
   python pystalker_cli.py list phemex --search Tesla
   python pystalker_cli.py list pionex --type perp
 
@@ -69,7 +92,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='pystalker_cli.py',
         description="The unified PyStalker command-line tool "
-                    "(operations, update, scanner, list)")
+                    "(operations, update, scanner, status, list)")
     sub = parser.add_subparsers(dest='command', metavar='command')
 
     def command(name, module_name, help_text):
@@ -85,6 +108,9 @@ def main(argv=None):
     command('scanner', 'scanner',
             "scan the drawn channels and/or the supertrend indicator "
             "(default: both)")
+    command('status', 'status',
+            "the last close with its daily and weekly changes, last update "
+            "date, channel and supertrend distances of every asset")
 
     # list: the second argument is the exchange
     list_parser = sub.add_parser(

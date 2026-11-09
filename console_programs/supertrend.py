@@ -25,6 +25,14 @@ the last close against the ACTIVE trend line:
   ("surpassed the upper line" in green, "surpassed the lower line" in
   red, like the channel scanner's broken-line phrases).
 
+  OPEN BROKEN SUPERTREND CHANNEL: as a separate alert, assets whose
+  last bar OPENED outside the Supertrend channel - beyond the Upper or
+  the Lower line, whatever the candle's direction (an Up or a Down
+  candle). The notification reports the open, the broken line (Upper or
+  Lower), how far beyond, the candle's direction and the close; the
+  line and the candle use the established color coding (Upper/Up
+  green, Lower/Down red).
+
 Assets without enough bars for the indicator's warm-up are skipped with
 the reason. Copies use their source asset's bars.
 
@@ -86,13 +94,16 @@ def run(args):
     names = resolve_names(conn, res)
     conn.close()
     print_supertrend_report(res, names, args)
+    # the OPEN BROKEN alert at the end of the listing (infrequent results,
+    # easy to locate at the bottom)
+    print_open_broken_alert(res, names, args)
 
 
 def resolve_names(conn, res):
     """The personalized display names of the listed assets (like Operations);
     resolved while the connection is still open."""
     names = {}
-    for sym, _, _ in res['touching'] + res['surpassed']:
+    for sym, _, _ in res['touching'] + res['surpassed'] + res['open_broken']:
         names[sym] = get_display_name(conn, sym) or sym
     return names
 
@@ -107,11 +118,14 @@ def print_supertrend_report(res, names, args):
     scanned = res['scanned']
 
     use_color = not args.no_color
+    # the date of the data in the title (the --date day, or the scan's day)
+    date_str = (getattr(args, 'date', None)
+                or res['generated'].strftime('%Y-%m-%d'))
     print(f"Report generated: {res['generated'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print(f"Supertrend - assets with the close within {args.max_proximity:g}% "
-          f"of the supertrend line or beyond it")
-    print(f"Parameters: period {args.period}, multiplier {args.multiplier:g} | "
-          f"Scanned {scanned} asset(s)\n")
+    print(f"Supertrend {date_str} (period {args.period}, multiplier {args.multiplier:g}) - "
+          f"assets with the close within {args.max_proximity:g}% of the supertrend "
+          f"line or beyond it")
+    print(f"Scanned {scanned} asset(s)\n")
 
     if touching:
         name_w = max(max(len(names[r[0]]) for r in touching), len('ASSET'))
@@ -151,6 +165,36 @@ def print_supertrend_report(res, names, args):
         print("\nSkipped:")
         for s in skipped:
             print(f"  {s}")
+
+
+def print_open_broken_alert(res, names, args):
+    """The OPEN BROKEN SUPERTREND CHANNEL alert: the last bar's open
+    outside the Supertrend channel - beyond the Upper or the Lower line,
+    whatever the candle's direction. A separate function so the scanner
+    can print it at the very END of its listing (it does not fire often -
+    the bottom of the output is easy to locate); nothing is printed when
+    no asset fired."""
+    open_broken = res['open_broken']
+    if not open_broken:
+        return
+    use_color = not args.no_color
+    date_str = (getattr(args, 'date', None)
+                or res['generated'].strftime('%Y-%m-%d'))
+    print(f"\nOPEN BROKEN SUPERTREND CHANNEL {date_str} (period {args.period}, "
+          f"multiplier {args.multiplier:g}) - the open of the last bar "
+          f"is beyond the Upper or the Lower line:")
+    for symbol, ev, price in open_broken:
+        beyond = f"{ev['beyond']:.2f}%" if ev['beyond'] != float('inf') else "?"
+        # the candle's direction colored like the trend coding; the broken
+        # line colored like the line coding (Upper green, Lower red)
+        candle = colored(f"{ev['candle']} candle",
+                          GREEN if ev['candle'] == 'Up' else RED, use_color)
+        line_s = colored(f"broke the {ev['line']} line",
+                         GREEN if ev['line'] == 'Upper' else RED, use_color)
+        print(f"  {names[symbol]}: the open {ev['open']:.2f} {line_s} "
+              f"({ev['line_value']:.2f}) by {beyond} - a {candle}, "
+              f"close {price:.2f}")
+    print(f"{len(open_broken)} open(s) outside the supertrend channel")
 
 
 def main(argv=None):

@@ -77,15 +77,27 @@ def load_channels(conn, symbol: str):
     return channels
 
 
-def load_last_price(conn, symbol: str):
-    """(last_close, n_bars) of the asset's daily bars."""
+def load_last_price(conn, symbol: str, cutoff: Optional[float] = None):
+    """(last_close, n_bars) of the asset's daily bars - as of a cutoff
+    Unix timestamp when given (the last close strictly before it and the
+    bar count up to it); None = the whole history."""
     try:
         cur = conn.cursor()
-        cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars"')
-        n = cur.fetchone()[0]
-        if n == 0:
-            return None, 0
-        cur.execute(f'SELECT close FROM "{symbol}_bars" ORDER BY timestamp DESC LIMIT 1')
+        if cutoff is None:
+            cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars"')
+            n = cur.fetchone()[0]
+            if n == 0:
+                return None, 0
+            cur.execute(f'SELECT close FROM "{symbol}_bars" '
+                        f'ORDER BY timestamp DESC LIMIT 1')
+        else:
+            cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars" '
+                        f'WHERE timestamp < ?', (cutoff,))
+            n = cur.fetchone()[0]
+            if n == 0:
+                return None, 0
+            cur.execute(f'SELECT close FROM "{symbol}_bars" WHERE timestamp < ? '
+                        f'ORDER BY timestamp DESC LIMIT 1', (cutoff,))
         row = cur.fetchone()
         return (float(row[0]) if row else None), n
     except sqlite3.OperationalError:
@@ -140,13 +152,19 @@ def evaluate_channel(channel, price: float, n_bars: int) -> Optional[Dict]:
 
 def scan_channel_proximity(conn, max_proximity: float = 10.0,
                            symbol: Optional[str] = None,
-                           lower_than: Optional[float] = None) -> Dict:
+                           lower_than: Optional[float] = None,
+                           cutoff: Optional[float] = None) -> Dict:
     """Scan all assets for channels near the price.
 
     lower_than keeps only the assets whose last close is at that price or
     lower (None = all prices), in both the near and the broken sections -
     the --lower-than flag of the console scanner and the 'Lower than'
     input of the application's dialog.
+
+    cutoff scans a PAST DAY: only the bars strictly before this Unix
+    timestamp, so the price and the channel lines (drawings are anchored
+    at bar positions) are evaluated at that moment of the history;
+    None = the whole history.
 
     Returns a dict:
       generated   report datetime (local time)
@@ -168,7 +186,7 @@ def scan_channel_proximity(conn, max_proximity: float = 10.0,
             continue  # discard assets without a drawn channel
         results['scanned'] += 1
         bars_symbol = get_source_symbol(conn, sym) or sym
-        price, n_bars = load_last_price(conn, bars_symbol)
+        price, n_bars = load_last_price(conn, bars_symbol, cutoff)
         if price is None or n_bars == 0:
             results['skipped'].append(f"{sym}: no price data"
                                        + (f" (source {bars_symbol})" if bars_symbol != sym else ""))

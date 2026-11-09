@@ -13,9 +13,18 @@ that reports the last close against the ACTIVE trend line:
     Supertrend the trend flips exactly at that bar, so the notification
     reports the flip ("the Up trend flipped Down - the close surpassed
     the lower line").
+  * OPEN BROKEN SUPERTREND CHANNEL: the open of the last bar is outside
+    the Supertrend channel - beyond the Upper or the Lower line,
+    whatever the candle's direction (up or down) - a separate event from
+    the close-based ones: the open can break while the close does not,
+    and the other way around.
 
-The inactive band is stale by construction and is not evaluated: the
-active trend line is the one that matters for touches and breaks.
+The CHANNEL is the one the application's chart indicator draws: the
+ACTIVE ratcheted line (the Lower support in an Up trend, the Upper
+resistance in a Down trend) plus the freshly recomputed basic line on
+the other side. The stale ratcheted band on the inactive side is NOT
+part of the channel (it can sit far from the price); the close-based
+TOUCHING and SURPASSED events only use the active line.
 Copies use their source asset's bars (like the channel scanner).
 
 Shared by the standalone supertrend.py CLI tool (and by the application
@@ -51,19 +60,22 @@ def get_source_symbol(conn, symbol: str) -> Optional[str]:
         return None
 
 
-def load_bars(conn, symbol: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """(highs, lows, closes, n) of the asset's daily bars, in stored order."""
+def load_bars(conn, symbol: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """(timestamps, opens, highs, lows, closes, n) of the asset's daily
+    bars, in stored order."""
     try:
         cur = conn.cursor()
-        cur.execute(f'SELECT high, low, close FROM "{symbol}_bars" '
+        cur.execute(f'SELECT timestamp, open, high, low, close FROM "{symbol}_bars" '
                      f'ORDER BY timestamp')
         rows = cur.fetchall()
     except sqlite3.OperationalError:
-        return np.array([]), np.array([]), np.array([]), 0
+        return (np.array([]), np.array([]), np.array([]),
+                np.array([]), np.array([]), 0)
     if not rows:
-        return np.array([]), np.array([]), np.array([]), 0
+        return (np.array([]), np.array([]), np.array([]),
+                np.array([]), np.array([]), 0)
     data = np.array(rows, dtype=float)
-    return data[:, 0], data[:, 1], data[:, 2], len(rows)
+    return data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4], len(rows)
 
 
 def supertrend(high, low, close, period=SUPERTREND_PERIOD,
@@ -77,12 +89,23 @@ def supertrend(high, low, close, period=SUPERTREND_PERIOD,
     exactly on the bar whose close crosses the current band - the classic
     Supertrend signal.
 
-    Returns (direction, line, flip, lower_band, upper_band):
-      direction   +1 (Up) / -1 (Down) per bar; 0 while the ATR warms up
-      line        the ACTIVE band per bar (support in Up, resistance in Down)
-      flip        True on the bar where the trend changed
-      lower_band  the final lower band per bar (NaN in the warm-up)
-      upper_band  the final upper band per bar (NaN in the warm-up)
+    Returns (direction, line, flip, lower_band, upper_band, basic_lower,
+    basic_upper):
+      direction    +1 (Up) / -1 (Down) per bar; 0 while the ATR warms up
+      line         the ACTIVE band per bar (support in Up, resistance in Down)
+      flip         True on the bar where the trend changed
+      lower_band   the final lower band per bar (NaN in the warm-up)
+      upper_band   the final upper band per bar (NaN in the warm-up)
+      basic_lower  the freshly recomputed lower band (hl2 - m * ATR) per bar
+      basic_upper  the freshly recomputed upper band (hl2 + m * ATR) per bar
+
+    The Supertrend CHANNEL as the application's chart indicator draws it
+    (the Upper and Lower lines on the chart) is the ACTIVE ratcheted line
+    PLUS the basic recomputed line on the other side: in an Up trend the
+    channel is [lower_band, basic_upper] (the support ratchets, the upper
+    line follows the price), in a Down trend it is [basic_lower,
+    upper_band]. The stale ratcheted band on the inactive side is NOT
+    part of the channel.
     """
     n = len(close)
     direction = np.zeros(n, dtype=int)
@@ -90,8 +113,11 @@ def supertrend(high, low, close, period=SUPERTREND_PERIOD,
     flip = np.zeros(n, dtype=bool)
     lower_band = np.full(n, np.nan)
     upper_band = np.full(n, np.nan)
+    basic_lower = np.full(n, np.nan)
+    basic_upper = np.full(n, np.nan)
     if n < period + 2:
-        return direction, line, flip, lower_band, upper_band
+        return (direction, line, flip, lower_band, upper_band,
+                basic_lower, basic_upper)
 
     # the true range and Wilder's ATR, seeded with the mean of the first
     # `period` true ranges
@@ -129,13 +155,21 @@ def supertrend(high, low, close, period=SUPERTREND_PERIOD,
         direction[t] = d
         lower_band[t] = fl
         upper_band[t] = fu
+        basic_lower[t] = lb
+        basic_upper[t] = ub
         line[t] = fl if d == 1 else fu
-    return direction, line, flip, lower_band, upper_band
+    return (direction, line, flip, lower_band, upper_band,
+            basic_lower, basic_upper)
 
 
-def evaluate_last_bar(direction, line, flip, lower_band, upper_band, close,
+def evaluate_last_bar(direction, line, flip, lower_band, upper_band,
+                      basic_lower, basic_upper, close,
                       max_proximity: float) -> Optional[Dict]:
     """Describe the last close against the active supertrend line.
+
+    (The basic recomputed bands are accepted for the shared call
+    signature; the close events only use the ACTIVE ratcheted band - a
+    flip crosses the active line, not the channel.)
 
     Returns None (nothing to report), {'status': 'touching', ...} or
     {'status': 'surpassed', ...} with trend ('Up'/'Down'), the line kind
@@ -175,28 +209,96 @@ def evaluate_last_bar(direction, line, flip, lower_band, upper_band, close,
             'age': age, 'close': float(close[t])}
 
 
+def evaluate_open_break(direction, line, flip, lower_band, upper_band,
+                        basic_lower, basic_upper, opens, closes):
+    """Describe the last bar's OPEN against the Supertrend channel AS THE
+    APPLICATION'S CHART DRAWS IT: the OPEN BROKEN SUPERTREND CHANNEL event
+    when the open is beyond the chart's Upper or Lower line, whatever the
+    last candle's direction.
+
+    The channel is the ACTIVE ratcheted line (the Lower support in an Up
+    trend, the Upper resistance in a Down trend) plus the freshly
+    recomputed basic line on the other side - exactly the Upper and Lower
+    lines of the chart's supertrend indicator, NOT the stale ratcheted
+    band (which can sit far from the price and would fire on opens the
+    chart clearly shows inside the channel).
+
+    Returns None (the open inside the channel, or still in the warm-up)
+    or {'status': 'open_broken', 'line': 'Upper'/'Lower' (the broken
+    line), 'line_value': its value, 'open': the open, 'beyond': the
+    percentage beyond (relative to the line's value), 'candle':
+    'Up'/'Down' (the last candle's direction: close vs open), 'age': the
+    trend age in bars, 'close': the last close}."""
+    t = len(opens) - 1
+    if direction[t] == 0:
+        return None                     # still in the warm-up
+    # the chart's Upper and Lower lines at the last bar: the ACTIVE
+    # ratcheted line + the freshly recomputed basic line on the other side
+    if direction[t] == 1:
+        channel_upper = basic_upper[t]   # follows the price above
+        channel_lower = lower_band[t]    # the ratcheted support
+    else:
+        channel_upper = upper_band[t]    # the ratcheted resistance
+        channel_lower = basic_lower[t]   # follows the price below
+    if opens[t] > channel_upper:
+        broken, value = 'Upper', channel_upper
+    elif opens[t] < channel_lower:
+        broken, value = 'Lower', channel_lower
+    else:
+        return None                     # the open is inside the range
+    denom = abs(value)
+    beyond = float(abs(opens[t] - value) / denom * 100.0) if denom > 1e-12 \
+        else float('inf')
+    # the trend age: bars since the last flip (like evaluate_last_bar)
+    flips = np.nonzero(flip[:t])[0]
+    if flips.size:
+        age = int(t - flips[-1])
+    else:
+        age = int(t - np.argmax(direction != 0))
+    return {'status': 'open_broken', 'line': broken,
+            'line_value': float(value), 'open': float(opens[t]),
+            'beyond': beyond,
+            'candle': 'Up' if closes[t] >= opens[t] else 'Down',
+            'age': age, 'close': float(closes[t])}
+
+
 def scan_supertrend(conn, period: int = SUPERTREND_PERIOD,
                     multiplier: float = SUPERTREND_MULTIPLIER,
                     max_proximity: float = 10.0,
-                    symbol: Optional[str] = None) -> Dict:
+                    symbol: Optional[str] = None,
+                    cutoff: Optional[float] = None) -> Dict:
     """Scan all assets for supertrend touches and breaks.
 
+    cutoff scans a PAST DAY: only the bars strictly before this Unix
+    timestamp, so the bands and all the events (touching, surpassed, the
+    open break) are evaluated at that moment of the history;
+    None = the whole history.
+
     Returns a dict:
-      generated   report datetime (local time)
-      scanned     number of assets with enough bars
-      touching    [(symbol, evaluation, close)] sorted by proximity
-      surpassed   [(symbol, evaluation, close)] sorted by symbol
-      skipped     list of explanatory strings for unusable assets
+      generated    report datetime (local time)
+      scanned      number of assets with enough bars
+      touching     [(symbol, evaluation, close)] sorted by proximity
+      surpassed    [(symbol, evaluation, close)] sorted by symbol
+      open_broken  [(symbol, evaluation, close)] - the OPEN BROKEN
+                   SUPERTREND CHANNEL event: the last bar's open outside
+                   the band range - sorted by symbol
+      skipped      list of explanatory strings for unusable assets
     """
     results = {'generated': datetime.now().astimezone(),
-               'scanned': 0, 'touching': [], 'surpassed': [], 'skipped': []}
+                'scanned': 0, 'touching': [], 'surpassed': [],
+                'open_broken': [], 'skipped': []}
     assets = get_assets(conn)
     if symbol:
         assets = [s for s in assets if s == symbol]
 
     for sym in assets:
         bars_symbol = get_source_symbol(conn, sym) or sym
-        high, low, close, n_bars = load_bars(conn, bars_symbol)
+        timestamps, opens, high, low, close, n_bars = load_bars(conn, bars_symbol)
+        if cutoff is not None:
+            keep = timestamps < cutoff
+            opens, high, low, close = (opens[keep], high[keep],
+                                       low[keep], close[keep])
+            n_bars = len(close)
         if n_bars == 0:
             results['skipped'].append(f"{sym}: no price data"
                                       + (f" (source {bars_symbol})"
@@ -209,13 +311,19 @@ def scan_supertrend(conn, period: int = SUPERTREND_PERIOD,
         results['scanned'] += 1
         series = supertrend(high, low, close, period, multiplier)
         ev = evaluate_last_bar(*series, close, max_proximity)
-        if ev is None:
-            continue
-        if ev['status'] == 'touching':
-            results['touching'].append((sym, ev, ev['close']))
-        else:
-            results['surpassed'].append((sym, ev, ev['close']))
+        if ev is not None:
+            if ev['status'] == 'touching':
+                results['touching'].append((sym, ev, ev['close']))
+            else:
+                results['surpassed'].append((sym, ev, ev['close']))
+        # the open of the last bar vs the band range, whatever the candle's
+        # direction (a separate event: the open can break while the close
+        # does not, and the other way around)
+        open_ev = evaluate_open_break(*series, opens, close)
+        if open_ev is not None:
+            results['open_broken'].append((sym, open_ev, open_ev['close']))
 
     results['touching'].sort(key=lambda r: r[1]['proximity'])
     results['surpassed'].sort(key=lambda r: (r[0], r[1]['line']))
+    results['open_broken'].sort(key=lambda r: (r[0], r[1]['line']))
     return results

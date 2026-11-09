@@ -21,11 +21,19 @@ The 'scanner' command of pystalker_cli.py: one command, two scanners.
                  supertrend's, to see which assets have both conditions
                  and which only one
 
+The OPEN BROKEN SUPERTREND CHANNEL alert (the last bar's open outside
+the supertrend band range, whatever the candle's direction) CLOSES the
+listing: it does not fire often, so the very end is where it is easiest
+to locate - after the by-asset view in --all mode, after the report in
+--supertrend mode.
+
 The flags of both original tools are kept, each documented for the scan it
 belongs to: --max-proximity (both scans, default 10%), --asset (both
 scans, the single-asset filter - the standalone programs keep their
---symbol flag), --lower-than (channels), --period and --multiplier
-(supertrend). The original standalone programs
+--symbol flag), --date (both scans: a past day - only the bars up to
+that date, so the channels and the supertrend are evaluated at that
+moment of the history), --lower-than (channels), --period and
+--multiplier (supertrend). The original standalone programs
 console_programs/channel_scanner.py and console_programs/supertrend.py
 keep running on their own with the same flags as before.
 
@@ -34,12 +42,14 @@ Usage:
   python pystalker_cli.py scanner --channels
   python pystalker_cli.py scanner --supertrend --period 10 --multiplier 3
   python pystalker_cli.py scanner --all --asset BTC-USD --max-proximity 5
+  python pystalker_cli.py scanner --date 2026-11-04          (that day's scans)
   python console_programs/scanner.py --db /path/to/pystalker.db   (standalone)
 """
 import argparse
 import importlib.util
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -84,8 +94,11 @@ def build_parser(parser):
     parser.add_argument('--max-proximity', type=float, default=10.0,
                         help="maximum proximity percentage to report (default: 10; both scans)")
     parser.add_argument('--asset', default=None,
-                        help="scan a single asset instead of all (both scans; the standalone "
-                             "programs keep their --symbol flag)")
+                        help="scan a single asset instead of all (both scans)")
+    parser.add_argument('--date', default=None, type=_date_arg, metavar='YYYY-MM-DD',
+                        help="scan a PAST day: only the bars up to that date, so the "
+                             "channels and the supertrend are evaluated at that moment "
+                             "of the history (both scans)")
     parser.add_argument('--lower-than', type=float, default=None, metavar='PRICE',
                         help="(channels) keep only the assets whose last price is at this "
                              "price or lower (e.g. --lower-than 15)")
@@ -97,11 +110,28 @@ def build_parser(parser):
                         help="plain text without ANSI colors")
 
 
+def _date_arg(text):
+    """The --date flag's value: a YYYY-MM-DD date."""
+    try:
+        datetime.strptime(text, '%Y-%m-%d')
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"the date must be YYYY-MM-DD (got {text!r})")
+    return text
+
+
 def run(args):
 
     if not Path(args.db).exists():
         print(f"Database not found: {args.db}")
         sys.exit(1)
+
+    # --date: the scan of a past day - only the bars strictly before the
+    # end of that date (None = today, the whole history)
+    cutoff = None
+    if args.date is not None:
+        cutoff = datetime.strptime(args.date, '%Y-%m-%d').timestamp() + 86400
+        print(f"Scanner as of {args.date} - only the bars up to that date\n")
 
     # --channels: only the channel scan; --supertrend: only the supertrend
     # scan; --all or bare: both (the user's choice for the default)
@@ -118,12 +148,13 @@ def run(args):
     if run_channels:
         res_channels = scan_channel_proximity(
             conn, max_proximity=args.max_proximity, symbol=args.asset,
-            lower_than=args.lower_than)
+            lower_than=args.lower_than, cutoff=cutoff)
         names_channels = channel_tool.resolve_names(conn, res_channels)
     if run_supertrend:
         res_supertrend = scan_supertrend(
             conn, period=args.period, multiplier=args.multiplier,
-            max_proximity=args.max_proximity, symbol=args.asset)
+            max_proximity=args.max_proximity, symbol=args.asset,
+            cutoff=cutoff)
         names_supertrend = supertrend_tool.resolve_names(conn, res_supertrend)
     conn.close()
 
@@ -139,6 +170,12 @@ def run(args):
     if both:
         print_fused_view(res_channels, names_channels, res_supertrend,
                          names_supertrend, args)
+    if res_supertrend is not None:
+        # the OPEN BROKEN SUPERTREND CHANNEL alert closes the listing: it
+        # does not fire often, so the very end is where it is easiest to
+        # locate (after the by-asset view in --all mode)
+        supertrend_tool.print_open_broken_alert(res_supertrend,
+                                                names_supertrend, args)
 
 
 def _best_per_asset(rows, key):
@@ -179,8 +216,11 @@ def print_fused_view(res_channels, names_channels, res_supertrend,
                                   lambda ev: ev['beyond'])
     st_flip = {sym: (ev, price) for sym, ev, price in res_supertrend['surpassed']}
 
-    print("\nBoth scans by asset - each asset's channel condition and its "
-          "supertrend condition side by side (sorted by asset name):")
+    date_str = (getattr(args, 'date', None)
+                or res_supertrend['generated'].strftime('%Y-%m-%d'))
+    print(f"\nBoth scans by asset {date_str} - each asset's channel condition and its "
+          f"supertrend condition (period {args.period}, multiplier "
+          f"{args.multiplier:g}) side by side (sorted by asset name):")
 
     def counts(syms, left, right):
         both = sum(1 for s in syms if s in left and s in right)
