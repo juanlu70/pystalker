@@ -104,6 +104,24 @@ def load_last_price(conn, symbol: str, cutoff: Optional[float] = None):
         return None, 0
 
 
+def load_closes(conn, symbol: str, cutoff: Optional[float] = None):
+    """(timestamps, closes) of the asset's daily bars, oldest first, up to
+    a cutoff Unix timestamp when given (None = the whole history);
+    ([], []) when the asset has no bars table."""
+    try:
+        cur = conn.cursor()
+        if cutoff is None:
+            cur.execute(f'SELECT timestamp, close FROM "{symbol}_bars" '
+                        f'ORDER BY timestamp')
+        else:
+            cur.execute(f'SELECT timestamp, close FROM "{symbol}_bars" '
+                        f'WHERE timestamp < ? ORDER BY timestamp', (cutoff,))
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        return [], []
+    return [int(r[0]) for r in rows], [float(r[1]) for r in rows]
+
+
 def evaluate_channel(channel, price: float, n_bars: int) -> Optional[Dict]:
     """Describe the price vs one channel at the last bar.
 
@@ -208,4 +226,77 @@ def scan_channel_proximity(conn, max_proximity: float = 10.0,
 
     results['near'].sort(key=lambda r: r[1]['proximity'])
     results['broken'].sort(key=lambda r: (r[0], r[1]['broken_line']))
+    return results
+
+
+def scan_channel_break_history(conn, symbol: str,
+                               cutoff: Optional[float] = None) -> Dict:
+    """Every HISTORICAL occurrence of a broken channel of ONE asset (the
+    scanner's --historical flag): one occurrence per EPISODE - the FIRST
+    bar of each stretch of bars with the close beyond one of the
+    channel's lines, since the price can stay outside for many bars
+    (that is one break, at the bar it started); a jump to the OTHER line
+    starts a new episode.
+
+    The bars are the asset's own, or its source asset's for copies (like
+    the proximity scan); cutoff scans up to a past day (None = the whole
+    history). Only the bars from the channel's left anchor on are
+    evaluated - the drawing starts there - and the lines extrapolate
+    forward like the proximity scan's evaluation of the last bar.
+
+    Returns a dict:
+      generated    report datetime (local time)
+      occurrences  [(timestamp, evaluation, close)] chronological - the
+                   evaluation like evaluate_channel's 'broken' dict (kind,
+                   broken_line, beyond, line_value, lower, upper)
+      skipped      explanatory strings (no price data); an asset without
+                   channel drawings is simply not scanned (empty list)
+    """
+    results = {'generated': datetime.now().astimezone(),
+               'occurrences': [], 'skipped': []}
+    channels = load_channels(conn, symbol)
+    if not channels:
+        return results
+    bars_symbol = get_source_symbol(conn, symbol) or symbol
+    timestamps, closes = load_closes(conn, bars_symbol, cutoff)
+    if not closes:
+        results['skipped'].append(f"{symbol}: no price data"
+                                  + (f" (source {bars_symbol})"
+                                     if bars_symbol != symbol else ""))
+        return results
+    n = len(closes)
+    for dtype, b1x, b1y, b2x, b2y, height in channels:
+        kind = 'Ascending' if dtype == 'asc_channel' else 'Descending'
+        slope = (b2y - b1y) / (b2x - b1x)
+        prev_side = None
+        # from the channel's left anchor on; the bars before the drawing
+        # starts cannot break it
+        for p in range(max(int(min(b1x, b2x)), 0), n):
+            base = b1y + slope * (p - b1x)
+            if height >= 0:
+                lower, upper = base, base + height
+            else:
+                upper, lower = base, base + height
+            price = closes[p]
+            if price > upper:
+                side, value = 'Upper', upper
+            elif price < lower:
+                side, value = 'Lower', lower
+            else:
+                side = None
+            # one occurrence per EPISODE: the first bar of each stretch
+            # beyond a line (a bar beyond the same line as the previous
+            # one continues its episode; the other side starts a new one)
+            if side is not None and side != prev_side:
+                denom = abs(value)
+                beyond = float(abs(price - value) / denom * 100.0) \
+                    if denom > 1e-12 else float('inf')
+                results['occurrences'].append(
+                    (timestamps[p],
+                     {'status': 'broken', 'kind': kind, 'broken_line': side,
+                      'beyond': beyond, 'line_value': float(value),
+                      'lower': float(lower), 'upper': float(upper)},
+                     price))
+            prev_side = side
+    results['occurrences'].sort(key=lambda r: r[0])
     return results

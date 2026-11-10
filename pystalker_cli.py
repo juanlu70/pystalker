@@ -22,10 +22,20 @@ Every command keeps the flags of its original program:
                --all scans both at once and appends the both-scans-by-asset
                view (each asset's two conditions side by side, sorted by
                asset name, with the both/only-one counts); --channels or
-               --supertrend scans one alone.
+               --supertrend scans one alone. The section flags --near,
+               --broken and --open-broken print ONLY that section of the
+               listing (combinable; they take precedence over the scan
+               flags and run the scans their sections need). --historical
+               (needs --asset) scans the asset's WHOLE HISTORY: every
+               occurrence of a broken channel, a supertrend flip or an
+               open broken supertrend channel, one chronological list (one
+               occurrence per episode), with --broken/--open-broken
+               filtering the event types.
     --channels/--supertrend/--all --db --max-proximity --asset
     --date(both scans as of a past day) --lower-than(channels)
     --period/--multiplier(supertrend) --no-color
+    --near/--broken/--open-broken(only that section of the listing)
+    --historical(--asset: the asset's whole history of events)
 
   status       The per-asset snapshot, one row per asset sorted by its
                display name: the last close (green when it went up
@@ -60,6 +70,9 @@ Usage:
   python pystalker_cli.py scanner --channels
   python pystalker_cli.py scanner --supertrend --multiplier 3
   python pystalker_cli.py scanner --all --asset BTC-USD --max-proximity 5
+  python pystalker_cli.py scanner --broken                   (only that section)
+  python pystalker_cli.py scanner --near --open-broken       (two sections alone)
+  python pystalker_cli.py scanner --historical --asset TSLA  (TSLA's event history)
   python pystalker_cli.py status
   python pystalker_cli.py status --asset BTC-USD
   python pystalker_cli.py status --date 2026-11-04

@@ -167,22 +167,29 @@ def print_supertrend_report(res, names, args):
             print(f"  {s}")
 
 
-def print_open_broken_alert(res, names, args):
+def print_open_broken_alert(res, names, args, section_mode=False):
     """The OPEN BROKEN SUPERTREND CHANNEL alert: the last bar's open
     outside the Supertrend channel - beyond the Upper or the Lower line,
     whatever the candle's direction. A separate function so the scanner
     can print it at the very END of its listing (it does not fire often -
     the bottom of the output is easy to locate); nothing is printed when
-    no asset fired."""
+    no asset fired - UNLESS section_mode (the scanner's --open-broken
+    flag): a section-only run prints the section's title and a "No
+    opens..." line when nothing fired, so it always shows the scan ran,
+    and it does not open with a blank line (there is nothing above it)."""
     open_broken = res['open_broken']
-    if not open_broken:
-        return
     use_color = not args.no_color
     date_str = (getattr(args, 'date', None)
                 or res['generated'].strftime('%Y-%m-%d'))
-    print(f"\nOPEN BROKEN SUPERTREND CHANNEL {date_str} (period {args.period}, "
-          f"multiplier {args.multiplier:g}) - the open of the last bar "
-          f"is beyond the Upper or the Lower line:")
+    title = (f"OPEN BROKEN SUPERTREND CHANNEL {date_str} (period {args.period}, "
+             f"multiplier {args.multiplier:g}) - the open of the last bar "
+             f"is beyond the Upper or the Lower line:")
+    if not open_broken:
+        if section_mode:
+            print(title)
+            print("No opens outside the supertrend channel")
+        return
+    print(("" if section_mode else "\n") + title)
     for symbol, ev, price in open_broken:
         beyond = f"{ev['beyond']:.2f}%" if ev['beyond'] != float('inf') else "?"
         # the candle's direction colored like the trend coding; the broken

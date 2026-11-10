@@ -327,3 +327,107 @@ def scan_supertrend(conn, period: int = SUPERTREND_PERIOD,
     results['surpassed'].sort(key=lambda r: (r[0], r[1]['line']))
     results['open_broken'].sort(key=lambda r: (r[0], r[1]['line']))
     return results
+
+
+def scan_supertrend_history(conn, period: int = SUPERTREND_PERIOD,
+                            multiplier: float = SUPERTREND_MULTIPLIER,
+                            symbol: Optional[str] = None,
+                            cutoff: Optional[float] = None) -> Dict:
+    """Every HISTORICAL occurrence of the supertrend events of ONE asset
+    (the scanner's --historical flag), one per episode:
+
+      flips        the close crossed the line - a one-bar event (the trend
+                   changed); the evaluation mirrors evaluate_last_bar's
+                   surpassed dict (old_trend, trend, line, line_value,
+                   beyond, close)
+      open_broken  the open outside the Supertrend channel AS THE CHART
+                   DRAWS IT (the active ratcheted line plus the basic
+                   recomputed line on the other side) - the FIRST bar of
+                   each stretch of opens beyond a line, since consecutive
+                   opens can stay outside; the evaluation mirrors
+                   evaluate_open_break's dict (line, line_value, open,
+                   beyond, candle, age, close)
+
+    Copies use their source asset's bars (like scan_supertrend); cutoff
+    scans up to a past day (None = the whole history).
+
+    Returns a dict:
+      generated    report datetime (local time)
+      flips        [(timestamp, evaluation, close)] chronological
+      open_broken  [(timestamp, evaluation, close)] chronological
+      skipped      explanatory strings (no price data, too few bars)
+    """
+    results = {'generated': datetime.now().astimezone(),
+               'flips': [], 'open_broken': [], 'skipped': []}
+    bars_symbol = get_source_symbol(conn, symbol) or symbol
+    timestamps, opens, high, low, close, n_bars = load_bars(conn, bars_symbol)
+    if cutoff is not None:
+        keep = timestamps < cutoff
+        timestamps, opens = timestamps[keep], opens[keep]
+        high, low, close = high[keep], low[keep], close[keep]
+        n_bars = len(close)
+    if n_bars == 0:
+        results['skipped'].append(f"{symbol}: no price data"
+                                  + (f" (source {bars_symbol})"
+                                     if bars_symbol != symbol else ""))
+        return results
+    if n_bars < period + 2:
+        results['skipped'].append(f"{symbol}: {n_bars} bars "
+                                  f"(< {period + 2} for period {period})")
+        return results
+    direction, line, flip, lower_band, upper_band, basic_lower, basic_upper = \
+        supertrend(high, low, close, period, multiplier)
+    prev_side = None            # the previous bar's open-break side (episodes)
+    last_change = None          # the last flip (or the seeded first bar)
+    for t in range(n_bars):
+        if direction[t] == 0:
+            continue            # still in the warm-up
+        if last_change is None:
+            last_change = t     # the seeded first bar (evaluate's fallback)
+        # the trend age at this bar: bars since the last flip BEFORE this
+        # bar - the established evaluate_last_bar/evaluate_open_break
+        # convention (a flip bar itself counts from the previous flip)
+        age = int(t - last_change)
+        if flip[t]:
+            old_dir = direction[t - 1]
+            crossed = lower_band[t] if old_dir == 1 else upper_band[t]
+            kind = 'Lower' if old_dir == 1 else 'Upper'
+            denom = abs(crossed)
+            beyond = float(abs(close[t] - crossed) / denom * 100.0) \
+                if denom > 1e-12 else float('inf')
+            results['flips'].append((timestamps[t],
+                {'status': 'surpassed',
+                 'trend': 'Up' if direction[t] > 0 else 'Down',
+                 'old_trend': 'Up' if old_dir > 0 else 'Down',
+                 'line': kind, 'line_value': float(crossed),
+                 'beyond': beyond, 'age': 0, 'close': float(close[t])},
+                float(close[t])))
+            last_change = t
+        # the open vs the chart's channel (the active ratcheted line plus
+        # the basic recomputed line on the other side)
+        if direction[t] == 1:
+            channel_upper, channel_lower = basic_upper[t], lower_band[t]
+        else:
+            channel_upper, channel_lower = upper_band[t], basic_lower[t]
+        if opens[t] > channel_upper:
+            side, value = 'Upper', channel_upper
+        elif opens[t] < channel_lower:
+            side, value = 'Lower', channel_lower
+        else:
+            side = None
+        # one occurrence per EPISODE: the first bar of each stretch of
+        # opens beyond a line (the same side as the previous bar continues
+        # the episode; the other side starts a new one)
+        if side is not None and side != prev_side:
+            denom = abs(value)
+            beyond = float(abs(opens[t] - value) / denom * 100.0) \
+                if denom > 1e-12 else float('inf')
+            results['open_broken'].append((timestamps[t],
+                {'status': 'open_broken', 'line': side,
+                 'line_value': float(value), 'open': float(opens[t]),
+                 'beyond': beyond,
+                 'candle': 'Up' if close[t] >= opens[t] else 'Down',
+                 'age': age, 'close': float(close[t])},
+                float(close[t])))
+        prev_side = side
+    return results
