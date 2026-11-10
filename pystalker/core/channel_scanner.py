@@ -77,19 +77,49 @@ def load_channels(conn, symbol: str):
     return channels
 
 
-def load_last_price(conn, symbol: str):
-    """(last_close, n_bars) of the asset's daily bars."""
+def load_last_price(conn, symbol: str, cutoff: Optional[float] = None):
+    """(last_close, n_bars) of the asset's daily bars - as of a cutoff
+    Unix timestamp when given (the last close strictly before it and the
+    bar count up to it); None = the whole history."""
     try:
         cur = conn.cursor()
-        cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars"')
-        n = cur.fetchone()[0]
-        if n == 0:
-            return None, 0
-        cur.execute(f'SELECT close FROM "{symbol}_bars" ORDER BY timestamp DESC LIMIT 1')
+        if cutoff is None:
+            cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars"')
+            n = cur.fetchone()[0]
+            if n == 0:
+                return None, 0
+            cur.execute(f'SELECT close FROM "{symbol}_bars" '
+                        f'ORDER BY timestamp DESC LIMIT 1')
+        else:
+            cur.execute(f'SELECT COUNT(*) FROM "{symbol}_bars" '
+                        f'WHERE timestamp < ?', (cutoff,))
+            n = cur.fetchone()[0]
+            if n == 0:
+                return None, 0
+            cur.execute(f'SELECT close FROM "{symbol}_bars" WHERE timestamp < ? '
+                        f'ORDER BY timestamp DESC LIMIT 1', (cutoff,))
         row = cur.fetchone()
         return (float(row[0]) if row else None), n
     except sqlite3.OperationalError:
         return None, 0
+
+
+def load_closes(conn, symbol: str, cutoff: Optional[float] = None):
+    """(timestamps, closes) of the asset's daily bars, oldest first, up to
+    a cutoff Unix timestamp when given (None = the whole history);
+    ([], []) when the asset has no bars table."""
+    try:
+        cur = conn.cursor()
+        if cutoff is None:
+            cur.execute(f'SELECT timestamp, close FROM "{symbol}_bars" '
+                        f'ORDER BY timestamp')
+        else:
+            cur.execute(f'SELECT timestamp, close FROM "{symbol}_bars" '
+                        f'WHERE timestamp < ? ORDER BY timestamp', (cutoff,))
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        return [], []
+    return [int(r[0]) for r in rows], [float(r[1]) for r in rows]
 
 
 def evaluate_channel(channel, price: float, n_bars: int) -> Optional[Dict]:
@@ -140,13 +170,19 @@ def evaluate_channel(channel, price: float, n_bars: int) -> Optional[Dict]:
 
 def scan_channel_proximity(conn, max_proximity: float = 10.0,
                            symbol: Optional[str] = None,
-                           lower_than: Optional[float] = None) -> Dict:
+                           lower_than: Optional[float] = None,
+                           cutoff: Optional[float] = None) -> Dict:
     """Scan all assets for channels near the price.
 
     lower_than keeps only the assets whose last close is at that price or
     lower (None = all prices), in both the near and the broken sections -
     the --lower-than flag of the console scanner and the 'Lower than'
     input of the application's dialog.
+
+    cutoff scans a PAST DAY: only the bars strictly before this Unix
+    timestamp, so the price and the channel lines (drawings are anchored
+    at bar positions) are evaluated at that moment of the history;
+    None = the whole history.
 
     Returns a dict:
       generated   report datetime (local time)
@@ -168,7 +204,7 @@ def scan_channel_proximity(conn, max_proximity: float = 10.0,
             continue  # discard assets without a drawn channel
         results['scanned'] += 1
         bars_symbol = get_source_symbol(conn, sym) or sym
-        price, n_bars = load_last_price(conn, bars_symbol)
+        price, n_bars = load_last_price(conn, bars_symbol, cutoff)
         if price is None or n_bars == 0:
             results['skipped'].append(f"{sym}: no price data"
                                        + (f" (source {bars_symbol})" if bars_symbol != sym else ""))
@@ -190,4 +226,77 @@ def scan_channel_proximity(conn, max_proximity: float = 10.0,
 
     results['near'].sort(key=lambda r: r[1]['proximity'])
     results['broken'].sort(key=lambda r: (r[0], r[1]['broken_line']))
+    return results
+
+
+def scan_channel_break_history(conn, symbol: str,
+                               cutoff: Optional[float] = None) -> Dict:
+    """Every HISTORICAL occurrence of a broken channel of ONE asset (the
+    scanner's --historical flag): one occurrence per EPISODE - the FIRST
+    bar of each stretch of bars with the close beyond one of the
+    channel's lines, since the price can stay outside for many bars
+    (that is one break, at the bar it started); a jump to the OTHER line
+    starts a new episode.
+
+    The bars are the asset's own, or its source asset's for copies (like
+    the proximity scan); cutoff scans up to a past day (None = the whole
+    history). Only the bars from the channel's left anchor on are
+    evaluated - the drawing starts there - and the lines extrapolate
+    forward like the proximity scan's evaluation of the last bar.
+
+    Returns a dict:
+      generated    report datetime (local time)
+      occurrences  [(timestamp, evaluation, close)] chronological - the
+                   evaluation like evaluate_channel's 'broken' dict (kind,
+                   broken_line, beyond, line_value, lower, upper)
+      skipped      explanatory strings (no price data); an asset without
+                   channel drawings is simply not scanned (empty list)
+    """
+    results = {'generated': datetime.now().astimezone(),
+               'occurrences': [], 'skipped': []}
+    channels = load_channels(conn, symbol)
+    if not channels:
+        return results
+    bars_symbol = get_source_symbol(conn, symbol) or symbol
+    timestamps, closes = load_closes(conn, bars_symbol, cutoff)
+    if not closes:
+        results['skipped'].append(f"{symbol}: no price data"
+                                  + (f" (source {bars_symbol})"
+                                     if bars_symbol != symbol else ""))
+        return results
+    n = len(closes)
+    for dtype, b1x, b1y, b2x, b2y, height in channels:
+        kind = 'Ascending' if dtype == 'asc_channel' else 'Descending'
+        slope = (b2y - b1y) / (b2x - b1x)
+        prev_side = None
+        # from the channel's left anchor on; the bars before the drawing
+        # starts cannot break it
+        for p in range(max(int(min(b1x, b2x)), 0), n):
+            base = b1y + slope * (p - b1x)
+            if height >= 0:
+                lower, upper = base, base + height
+            else:
+                upper, lower = base, base + height
+            price = closes[p]
+            if price > upper:
+                side, value = 'Upper', upper
+            elif price < lower:
+                side, value = 'Lower', lower
+            else:
+                side = None
+            # one occurrence per EPISODE: the first bar of each stretch
+            # beyond a line (a bar beyond the same line as the previous
+            # one continues its episode; the other side starts a new one)
+            if side is not None and side != prev_side:
+                denom = abs(value)
+                beyond = float(abs(price - value) / denom * 100.0) \
+                    if denom > 1e-12 else float('inf')
+                results['occurrences'].append(
+                    (timestamps[p],
+                     {'status': 'broken', 'kind': kind, 'broken_line': side,
+                      'beyond': beyond, 'line_value': float(value),
+                      'lower': float(lower), 'upper': float(upper)},
+                     price))
+            prev_side = side
+    results['occurrences'].sort(key=lambda r: r[0])
     return results

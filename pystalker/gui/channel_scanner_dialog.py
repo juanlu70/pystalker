@@ -1,9 +1,8 @@
 """
 PyStalker - Channel Scanner dialog (Trading > Channel Scanner)
 
-The scanner command of pystalker_cli.py (--channels) is the console twin
-of this dialog: assets whose price is near a drawn channel line (inside
-the channel, within the chosen proximity
+The channel_scanner.py tool inside the application: assets whose price is
+near a drawn channel line (inside the channel, within the chosen proximity
 percentage of the lower or upper line), plus broken-channel notifications.
 The ASSET column shows the personalized display names (the official symbol
 rides along hidden, so charts and indicator lines keep working). Click a

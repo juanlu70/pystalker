@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""
+operations_list.py - List the trading operations (the Operations journal)
+
+Prints the trading journal stored in the pystalker database - the same list
+as Trading -> Operations in the application, **split into the same three
+groups as its tabs**: OPEN OPERATIONS (running, not planned), PLANNED
+OPERATIONS (all the planned ones) and CLOSED OPERATIONS (done, not
+planned), each section with its title and count - a group flag lists one
+group alone. The columns: the entry date, the asset (its
+personalized name), the PAPER and PLANNED flags, Long/Short, entry price,
+the stop price (a light-red line is drawn on the asset's chart in the
+application when it is set), volume, leverage, the current price (the last close stored in the
+database), the NET GAIN % (the directional move without the leverage, the
+1x gain) and the leveraged GAIN % (green/red like the application, plain
+for planned operations whose gains are not real yet), the exit, the exit
+price and the FINAL GAIN % (the leveraged gain at the exit price -
+identical to GAIN % for closed operations, the projection at the
+reference exit price while open; colored for real closed operations, plain
+for the potential gain of open ones and the projected gain of planned ones).
+
+The listing logic (and the gain math, identical to the application's)
+lives in pystalker/core/operations.py. The database is only read.
+
+Usage:
+  python pystalker_cli.py operations                     (the unified program)
+  python pystalker_cli.py operations --asset BTC --planned
+  python console_programs/operations_list.py --db /path/to/pystalker.db   (standalone)
+"""
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pystalker.core.operations import fmt_gain, fmt_price, list_operations
+
+DB_DEFAULT = str(Path.home() / '.pystalker' / 'pystalker.db')
+
+GREEN = '\033[32m'
+RED = '\033[31m'
+BOLD = '\033[1m'
+RESET = '\033[0m'
+
+COLUMNS = ['ENTRY', 'ASSET', 'PAPER', 'PLANNED', 'LONG/SHORT', 'ENTRY PRICE', 'STOP',
+           'VOLUME', 'LEVERAGE', 'CURRENT PRICE', 'NET GAIN %', 'GAIN %', 'EXIT',
+           'EXIT PRICE', 'FINAL GAIN %']
+
+
+def gain_color(value):
+    return GREEN if value >= 0 else RED
+
+
+def colored(text, color, enabled=True, bold=False):
+    """text wrapped in ANSI codes; the padding must already be applied
+    (the escapes would break the column alignment otherwise)."""
+    if not enabled or color is None:
+        return text
+    prefix = (BOLD if bold else '') + color
+    return f"{prefix}{text}{RESET}"
+
+
+def build_parser(parser):
+    """This tool's flags, shared by the standalone program and pystalker_cli.py."""
+    parser.add_argument('--db', default=DB_DEFAULT, help=f"path to the database (default: {DB_DEFAULT})")
+    parser.add_argument('--asset', default=None,
+                        help="keep only this asset's operations (substring of its stored name, "
+                             "official symbol or personalized name)")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--open', action='store_true',
+                       help="only the open operations (running, not planned)")
+    group.add_argument('--closed', action='store_true',
+                       help="only the closed operations (done, not planned)")
+    group.add_argument('--planned', action='store_true',
+                       help="only the planned operations (projects, open or closed)")
+    parser.add_argument('--paper', action='store_true', help="only paper trading operations")
+    parser.add_argument('--no-color', action='store_true', help="plain text without ANSI colors")
+
+
+GROUP_TITLES = {'open': 'OPEN OPERATIONS', 'planned': 'PLANNED OPERATIONS',
+                'closed': 'CLOSED OPERATIONS'}
+
+
+def run(args):
+
+    if not Path(args.db).exists():
+        print(f"Database not found: {args.db}")
+        sys.exit(1)
+
+    group = 'open' if args.open else ('closed' if args.closed
+                                      else ('planned' if args.planned else None))
+    conn = sqlite3.connect(args.db)
+    try:
+        result = list_operations(
+            conn,
+            asset=args.asset,
+            group=group,
+            paper=True if args.paper else None)
+    except sqlite3.OperationalError:
+        print("The database has no operations yet - create them in the application "
+              "(Trading -> Operations).")
+        conn.close()
+        sys.exit(1)
+    conn.close()
+
+    rows = result['rows']
+    use_color = not args.no_color
+
+    print(f"Report generated: {result['generated'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    scope = []
+    if args.asset:
+        scope.append(f"asset \"{args.asset}\"")
+    if group is not None:
+        scope.append(f"only {group}")
+    if args.paper:
+        scope.append("paper")
+    scope_text = (f" matching {' + '.join(scope)}" if scope else "") + \
+                 (f" - {len(rows)} of {result['total']} in the database" if scope else "")
+    print(f"Operations{scope_text}\n")
+
+    if not rows:
+        print("No operations in the database yet" if not scope
+              else "No operation matches the filters")
+        return
+
+    # by default the operations are listed in three sections (open, planned,
+    # closed - the application's tabs); a group flag lists one alone
+    if group is not None:
+        sections = [(GROUP_TITLES[group], rows)]
+    else:
+        sections = [(GROUP_TITLES[g], [r for r in rows if r['group'] == g])
+                     for g in ('open', 'planned', 'closed')]
+
+    for title, section_rows in sections:
+        if not section_rows:
+            continue
+
+        # column values as plain text first (padding), colors applied after so
+        # the ANSI escapes never break the alignment
+        plain_rows = []
+        for r in section_rows:
+            lev = r['lev']
+            plain_rows.append((
+                r['entry_date'] or '',
+                r['asset'],
+                'X' if r['paper'] else '-',
+                'X' if r['planned'] else '-',
+                r['side'],
+                fmt_price(r['entry_price']) if r['entry_price'] is not None else '-',
+                fmt_price(r['stop_price']) if r['stop_price'] is not None else '-',
+                fmt_price(r['volume']) if r['volume'] is not None else '-',
+                f"{lev:g}x" if lev else (r['leverage'] if r['leverage'] else '-'),
+                fmt_price(r['current_price']) if r['current_price'] is not None else '-',
+                fmt_gain(r['net_gain']),
+                fmt_gain(r['gain']),
+                r['exit_date'] or '',
+                fmt_price(r['exit_price']) if r['exit_price'] is not None else '',
+                fmt_gain(r['final_gain']),
+            ))
+
+        widths = [max(len(COLUMNS[i]), max((len(row[i]) for row in plain_rows), default=0))
+                  for i in range(len(COLUMNS))]
+        aligns = ['<', '<', '>', '>', '<', '>', '>', '>', '>', '>', '>', '>', '<', '>', '>']
+
+        print(f"{title} ({len(section_rows)})")
+        header = '  '.join(f"{COLUMNS[i]:{aligns[i]}{widths[i]}}" for i in range(len(COLUMNS)))
+        print(header)
+        for r, plain in zip(section_rows, plain_rows):
+            # pad first, colorize after: the f-string widths would count the
+            # invisible ANSI escape characters otherwise
+            cells = [f"{plain[i]:{aligns[i]}{widths[i]}}" for i in range(len(COLUMNS))]
+            # Long/Short: colored like the application (green long, red short)
+            side_color = GREEN if r['side'] == 'Long' else RED
+            cells[4] = colored(cells[4], side_color, use_color, bold=True)
+            # NET GAIN % / GAIN %: green/red like the application (the 1x move
+            # and the leveraged one), plain for planned operations (still only
+            # a project, no real gains yet)
+            if r['net_gain'] is not None and not r['planned']:
+                cells[10] = colored(cells[10], gain_color(r['net_gain']), use_color, bold=True)
+            if r['gain'] is not None and not r['planned']:
+                cells[11] = colored(cells[11], gain_color(r['gain']), use_color, bold=True)
+            # FINAL GAIN %: colored for real closed operations (the leveraged
+            # gain at the exit price, identical to GAIN % there); plain for the
+            # potential gain of open ones and the projected gain of planned ones
+            if r['final_gain'] is not None and not r['open'] and not r['planned']:
+                cells[14] = colored(cells[14], gain_color(r['final_gain']), use_color, bold=True)
+            print('  '.join(cells))
+        print()
+
+    print(f"{len(rows)} operation(s): {result['n_open']} open, "
+          f"{result['n_planned']} planned, {result['n_closed']} closed")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="List the trading operations (the Operations journal) from the terminal")
+    build_parser(parser)
+    run(parser.parse_args(argv))
+
+
+if __name__ == '__main__':
+    main()

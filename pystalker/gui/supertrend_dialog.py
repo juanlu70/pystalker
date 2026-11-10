@@ -1,9 +1,8 @@
 """
 PyStalker - Supertrend dialog (Trading > Supertrend)
 
-The scanner command of pystalker_cli.py (--supertrend) is the console
-twin of this dialog: assets whose last close is TOUCHING the active
-supertrend line (within the chosen proximity
+The supertrend.py tool inside the application: assets whose last close is
+TOUCHING the active supertrend line (within the chosen proximity
 percentage, still on the safe side of it) plus the SURPASSED
 notifications - the close crossed the line on the last bar, flipping the
 trend. The ASSET column shows the personalized display names (the
