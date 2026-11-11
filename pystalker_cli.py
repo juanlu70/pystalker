@@ -21,8 +21,11 @@ Every command keeps the flags of its original program:
                line, trend flips, opens outside the band range); bare or
                --all scans both at once and appends the both-scans-by-asset
                view (each asset's two conditions side by side, sorted by
-               asset name, with the both/only-one counts); --channels or
-               --supertrend scans one alone. The section flags --near,
+               asset name, with the both/only-one counts and the events'
+               breakdown: broken channels by line, flips by direction,
+               each with its percentage; both tables titled with their
+               day); --channels or --supertrend scans
+               one alone. The section flags --near,
                --broken and --open-broken print ONLY that section of the
                listing (combinable; they take precedence over the scan
                flags and run the scans their sections need). --historical

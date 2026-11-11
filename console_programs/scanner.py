@@ -19,7 +19,12 @@ The 'scanner' command of pystalker_cli.py: one command, two scanners.
                  broken/flipped one, each closed by the counts of assets
                  with both conditions / only the channel's / only the
                  supertrend's, to see which assets have both conditions
-                 and which only one
+                 and which only one. The two tables' titles carry the
+                 day, like every other section's title. The broken/flipped
+                 summary then breaks its events down (the user's
+                 request): the broken channels by the line they broke
+                 and the flips by their direction, each count with its
+                 percentage of that event type's total
 
 The OPEN BROKEN SUPERTREND CHANNEL alert (the last bar's open outside
 the supertrend band range, whatever the candle's direction) CLOSES the
@@ -423,9 +428,15 @@ def print_fused_view(res_channels, names_channels, res_supertrend,
     one of them, sorted by the assets' display names (case-insensitive,
     the user's choice) - so it is easy to see which assets have both
     conditions and which only one. Two tables: near a channel line /
-    touching the supertrend line, and broken channel / supertrend flip;
-    each is closed by the count of assets with both conditions, only the
-    channel's and only the supertrend's. The color coding is the reports'
+    touching the supertrend line, and broken channel / supertrend flip -
+    each table's title carrying its day (the --date day or the scan's
+    day), like every other section's title (the user's request); each is
+    closed by the count of assets with both conditions, only the
+    channel's and only the supertrend's. The broken/flip summary then
+    breaks its events down (the user's request): the broken channels by
+    the line they broke and the flips by their direction, each count with
+    its share of that event type's total (a breakdown line only prints
+    when that type has assets). The color coding is the reports'
     one (Ascending/Upper/Up in green, Descending/Lower/Down in red).
 
     sections is the scanner's section mode (the --near/--broken flags):
@@ -486,7 +497,7 @@ def print_fused_view(res_channels, names_channels, res_supertrend,
                        len('NEAR CHANNEL LINE'))
             st_w = max(12 + max((len(r) for r in st_rest.values()), default=0),
                        len('NEAR SUPERTREND LINE'))
-            print("NEAR A CHANNEL LINE / TOUCHING THE SUPERTREND LINE")
+            print(f"NEAR A CHANNEL LINE / TOUCHING THE SUPERTREND LINE {date_str}")
             print(f"{'ASSET':<{name_w}}  {'NEAR CHANNEL LINE':<{ch_w}}  "
                   f"{'NEAR SUPERTREND LINE':<{st_w}}  {'AGE':>5}  {'LAST CLOSE':>12}")
             for s in syms:
@@ -539,7 +550,7 @@ def print_fused_view(res_channels, names_channels, res_supertrend,
                        len('CHANNEL BROKEN'))
             st_w = max(32 + max((len(r) for r in st_rest.values()), default=0),
                        len('SUPERTREND FLIP'))
-            print("BROKEN CHANNEL / SUPERTREND FLIP")
+            print(f"BROKEN CHANNEL / SUPERTREND FLIP {date_str}")
             print(f"{'ASSET':<{name_w}}  {'CHANNEL BROKEN':<{ch_w}}  "
                   f"{'SUPERTREND FLIP':<{st_w}}  {'LAST CLOSE':>12}")
             for s in syms:
@@ -576,6 +587,29 @@ def print_fused_view(res_channels, names_channels, res_supertrend,
             n_both, n_ch, n_st = counts(syms, chan_broken, st_flip)
             print(f"\n{len(syms)} asset(s): {n_both} with both conditions, "
                   f"{n_ch} only the broken channel, {n_st} only the supertrend flip")
+            # the events' breakdown (the user's request): the broken
+            # channels by the line they broke and the flips by their
+            # direction, each count with its share of that event type's
+            # total - over the assets the table lists (an asset with
+            # several broken drawings shows one, its closest break)
+            if chan_broken:
+                n_upper = sum(1 for s in chan_broken
+                              if chan_broken[s][0]['broken_line'] == 'Upper')
+                n_lower = len(chan_broken) - n_upper
+                print(f"Broken channels: {len(chan_broken)} - "
+                      f"{colored(f'{n_upper} Upper', GREEN, use_color)} "
+                      f"({n_upper / len(chan_broken) * 100:.2f}%), "
+                      f"{colored(f'{n_lower} Lower', RED, use_color)} "
+                      f"({n_lower / len(chan_broken) * 100:.2f}%)")
+            if st_flip:
+                n_up = sum(1 for s in st_flip
+                           if st_flip[s][0]['trend'] == 'Up')
+                n_down = len(st_flip) - n_up
+                print(f"Supertrend flips: {len(st_flip)} - "
+                      f"{colored(f'{n_up} Up', GREEN, use_color)} "
+                      f"({n_up / len(st_flip) * 100:.2f}%), "
+                      f"{colored(f'{n_down} Down', RED, use_color)} "
+                      f"({n_down / len(st_flip) * 100:.2f}%)")
 
 
 def main(argv=None):
