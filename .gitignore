@@ -212,3 +212,6 @@ qtstalker-0.36/
 # Documents for agents
 docs/
 
+# ML models
+.joblib
+
