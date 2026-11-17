@@ -1,0 +1,37 @@
+# The trade definition of the supertrend flip suite (train / predict /
+# backtest). The trained models store a snapshot of this file, so the
+# predictions always use the definitions the model was trained with.
+#
+# days:        the success window - the trade must be winning this many
+#              bars after the flip (WIN = never stopped AND the day-N
+#              close in profit; STOP = the stop touched within N bars;
+#              LOSS = never stopped but the day-N close losing).
+# stop_times:  the stop distance - this DECIMAL times the PREDICTED daily
+#              volatility of the volatility_prediction program (its honest
+#              walked predictions; the recent flips use its live model),
+#              around the entry, on the trade's risk side.
+# direction:  same = trade with the new trend (long on a flip Up, short
+#              on a flip Down); opposite = trade against it.
+days: 7
+stop_times: 1.5
+direction: same
+
+# The supertrend
+period: 10
+multiplier: 1.8
+
+# The ML algorithm: lightgbm | sklearn
+model: lightgbm
+
+# The features. moving_averages / macd / atr / bollinger / momentum /
+# volume are switches; rsi and stochastic are PERIODS (0 disables them -
+# "RSI or stochastic" is your choice here).
+features:
+  moving_averages: true    # SMA 5/20/50, EMA 10/50, the SMA20/50 cross
+  rsi: 14
+  stochastic: 0            # 14 enables the Stochastic %K/%D (3-smooth)
+  macd: true               # MACD 12/26/9, normalized by the close
+  atr: true                # ATR(14) % and its 20-bar ratio
+  bollinger: true          # the Bollinger(20, 2) position and width
+  momentum: true           # the 1/5/7/20-day returns
+  volume: true             # the volume z-score
