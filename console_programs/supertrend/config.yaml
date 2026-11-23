@@ -12,7 +12,7 @@
 #              around the entry, on the trade's risk side.
 # direction:  same = trade with the new trend (long on a flip Up, short
 #              on a flip Down); opposite = trade against it.
-days: 7
+days: 3
 stop_times: 1.5
 direction: same
 
