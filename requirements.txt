@@ -4,3 +4,12 @@ pandas>=1.5.0
 numpy>=1.21.0
 TA-Lib>=0.4.28
 pyqtgraph>=0.13.0
+
+# the console programs' machine-learning stack (the volatility
+# prediction, prob_target, the supertrend flip study, the supertrend
+# trade suite)
+lightgbm>=4.0.0
+scikit-learn>=1.3.0
+scipy>=1.10.0
+PyYAML>=6.0
+joblib>=1.3.0
