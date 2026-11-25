@@ -1,5 +1,5 @@
 """
-PyStalker - Asset Navigator Panel with Spreads tab
+PyStalker - Asset Navigator Panel with Spreads and Overlaps tabs
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QTabWidget,
@@ -14,6 +14,8 @@ class AssetNavigator(QWidget):
     asset_removed = pyqtSignal(str)
     spread_selected = pyqtSignal(str)
     spread_removed = pyqtSignal(str)
+    overlap_selected = pyqtSignal(str)
+    overlap_removed = pyqtSignal(str)
     copy_graph = pyqtSignal(str)
     rename_graph = pyqtSignal(str)
     
@@ -21,6 +23,7 @@ class AssetNavigator(QWidget):
         super().__init__(parent)
         self.assets = []
         self.spreads = []
+        self.overlaps = []
         self.init_ui()
     
     def init_ui(self):
@@ -77,6 +80,25 @@ class AssetNavigator(QWidget):
         spreads_layout.addLayout(spread_button_layout)
         
         self.tabs.addTab(spreads_widget, "Spreads")
+        
+        # Overlaps tab (the File > Asset Overlap results)
+        overlaps_widget = QWidget()
+        overlaps_layout = QVBoxLayout(overlaps_widget)
+        overlaps_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.overlap_list = QListWidget()
+        self.overlap_list.itemDoubleClicked.connect(self.on_overlap_double_clicked)
+        self.overlap_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.overlap_list.customContextMenuRequested.connect(self.show_overlap_context_menu)
+        overlaps_layout.addWidget(self.overlap_list)
+        
+        overlap_button_layout = QHBoxLayout()
+        remove_overlap_button = QPushButton("Remove")
+        remove_overlap_button.clicked.connect(self.on_remove_overlap)
+        overlap_button_layout.addWidget(remove_overlap_button)
+        overlaps_layout.addLayout(overlap_button_layout)
+        
+        self.tabs.addTab(overlaps_widget, "Overlaps")
         
         layout.addWidget(self.tabs)
         
@@ -224,3 +246,43 @@ class AssetNavigator(QWidget):
         remove_action.clicked.connect(self.on_remove_spread)
         menu.addAction(remove_action)
         menu.exec(self.spread_list.mapToGlobal(pos))
+    
+    def add_overlap(self, name: str):
+        if name not in self.overlaps:
+            self.overlaps.append(name)
+            self.overlap_list.addItem(QListWidgetItem(name))
+    
+    def remove_overlap(self, name: str):
+        """Take an overlap out of the list without emitting (the window
+        drives the removal when an overlap's assets change and it is
+        renamed away)."""
+        if name in self.overlaps:
+            self.overlaps.remove(name)
+            for i in range(self.overlap_list.count()):
+                if self.overlap_list.item(i).text() == name:
+                    self.overlap_list.takeItem(i)
+                    break
+    
+    def on_overlap_double_clicked(self, item: QListWidgetItem):
+        self.overlap_selected.emit(item.text())
+    
+    def on_remove_overlap(self):
+        selected = self.overlap_list.selectedItems()
+        if selected:
+            item = selected[0]
+            name = item.text()
+            self.overlaps.remove(name)
+            self.overlap_list.takeItem(self.overlap_list.row(item))
+            self.overlap_removed.emit(name)
+            return name
+        return None
+    
+    def show_overlap_context_menu(self, pos):
+        item = self.overlap_list.itemAt(pos)
+        if not item:
+            return
+        menu = QMenu(self)
+        remove_action = QAction("Remove", self)
+        remove_action.clicked.connect(self.on_remove_overlap)
+        menu.addAction(remove_action)
+        menu.exec(self.overlap_list.mapToGlobal(pos))

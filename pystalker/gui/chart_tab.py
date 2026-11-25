@@ -171,7 +171,11 @@ class ChartTab(QWidget):
             self.clear_indicator_panels()
     
     def on_colors_changed(self):
-        if self.symbol and self.chart_view.is_spread and self._database:
+        if self.symbol and self.chart_view.is_overlap and self._database:
+            self._database.save_overlap_lines(self.symbol,
+                                 self.chart_view.overlap_symbols,
+                                 self.chart_view.overlap_colors)
+        elif self.symbol and self.chart_view.is_spread and self._database:
             self._database.save_spread_lines(self.symbol,
                                  self.chart_view.spread_symbol1,
                                  self.chart_view.spread_symbol2,
@@ -271,7 +275,7 @@ class ChartTabWidget(QTabWidget):
         if database:
             tab._database = database
         tab.chart_view.colors_changed.connect(
-            lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color) if not tab.chart_view.is_spread else None
+            lambda: self.colors_changed_global.emit(tab.chart_view.bull_color, tab.chart_view.bear_color) if not (tab.chart_view.is_spread or tab.chart_view.is_overlap) else None
         )
         tab.indicatorPanelDoubleClicked.connect(self.indicatorPanelDoubleClicked.emit)
         self.tabs[symbol] = tab

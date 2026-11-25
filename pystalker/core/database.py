@@ -3,6 +3,7 @@ PyStalker - SQLite Database for storing chart data
 """
 
 import json
+import re
 import sqlite3
 import os
 from datetime import datetime
@@ -63,6 +64,14 @@ class Database:
                 name TEXT PRIMARY KEY,
                 symbol1 TEXT NOT NULL,
                 symbol2 TEXT NOT NULL,
+                start_date TEXT NOT NULL
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS overlaps (
+                name TEXT PRIMARY KEY,
+                symbols TEXT NOT NULL,
                 start_date TEXT NOT NULL
             )
         ''')
@@ -381,14 +390,29 @@ class Database:
         self._ensure_bars_table(symbol, bars_table)
         
         df = bar_data.to_dataframe()
-        has_series2 = 'Series2' in df.columns
-        series2_values = df['Series2'].values if has_series2 else None
+        # the synthetic series of a spread (Series2) or an overlap
+        # (Series2..SeriesN) persist as extra columns of the bars table
+        series_cols = sorted(
+            (c for c in df.columns
+             if re.fullmatch(r'Series\d+', c) and int(c[6:]) >= 2),
+            key=lambda c: int(c[6:]))
         
-        if has_series2 and series2_values is not None:
+        if series_cols:
+            # every series column must exist in the bars table: series2
+            # is born with it, the later ones are added on demand
+            for col in series_cols:
+                try:
+                    cursor.execute(
+                        f'ALTER TABLE {bars_table} ADD COLUMN {col.lower()} REAL')
+                except sqlite3.OperationalError:
+                    pass
+            values_list = [df[col].values for col in series_cols]
             rows = []
             for i, bar in enumerate(bar_data.bars):
-                s2 = series2_values[i] if i < len(series2_values) else None
-                s2_val = float(s2) if s2 is not None and not (isinstance(s2, float) and pd.isna(s2)) else None
+                vals = []
+                for values in values_list:
+                    v = values[i] if i < len(values) else None
+                    vals.append(float(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else None)
                 rows.append((
                     int(bar.date.timestamp()),
                     bar.open,
@@ -396,12 +420,14 @@ class Database:
                     bar.low,
                     bar.close,
                     bar.volume,
-                    s2_val
+                    *vals
                 ))
+            col_names = ', '.join(col.lower() for col in series_cols)
+            placeholders = ', '.join('?' * len(series_cols))
             cursor.executemany(f'''
                 INSERT OR REPLACE INTO {bars_table}
-                (timestamp, open, high, low, close, volume, series2)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (timestamp, open, high, low, close, volume, {col_names})
+                VALUES (?, ?, ?, ?, ?, ?, {placeholders})
             ''', rows)
         else:
             rows = [
@@ -421,7 +447,7 @@ class Database:
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', rows)
         
-        if not bar_data.is_spread:
+        if not bar_data.is_spread and not bar_data.is_overlap:
             cursor.execute('''
                 INSERT OR REPLACE INTO symbols (symbol, last_updated, interval)
                 VALUES (?, ?, ?)
@@ -448,11 +474,17 @@ class Database:
         self._ensure_bars_table(symbol, bars_table)
         cursor.execute(f'PRAGMA table_info({bars_table})')
         columns = [row[1] for row in cursor.fetchall()]
-        has_series2 = 'series2' in columns
+        # the synthetic series of a spread (series2) or an overlap
+        # (series2..seriesN)
+        series_cols = sorted(
+            (c for c in columns
+             if re.fullmatch(r'series\d+', c) and int(c[6:]) >= 2),
+            key=lambda c: int(c[6:]))
         
-        if has_series2:
+        if series_cols:
+            col_names = ', '.join(series_cols)
             cursor.execute(f'''
-                SELECT timestamp, open, high, low, close, volume, series2
+                SELECT timestamp, open, high, low, close, volume, {col_names}
                 FROM {bars_table}
                 ORDER BY timestamp ASC
             ''')
@@ -470,7 +502,7 @@ class Database:
         
         bar_data = BarData(symbol)
         bar_data.source_symbol = source_symbol
-        series2_values = []
+        series_values = {col: [] for col in series_cols}
         
         for row in rows:
             bar = Bar(
@@ -482,20 +514,36 @@ class Database:
                 volume=float(row[5]) if row[5] else 0.0
             )
             bar_data.bars.append(bar)
-            if has_series2 and len(row) > 6 and row[6] is not None:
-                series2_values.append(float(row[6]))
+            for j, col in enumerate(series_cols):
+                v = row[6 + j] if len(row) > 6 + j else None
+                if v is not None:
+                    series_values[col].append(float(v))
         
-        if has_series2 and series2_values:
+        has_series = any(series_values.values())
+        if has_series:
             df = bar_data.to_dataframe()
-            n = min(len(series2_values), len(df))
-            s2_arr = [float('nan')] * len(df)
-            for i in range(n):
-                s2_arr[i] = series2_values[i]
-            df['Series2'] = s2_arr
+            for col in series_cols:
+                vals = series_values[col]
+                if not vals:
+                    continue
+                arr = [float('nan')] * len(df)
+                for i in range(min(len(vals), len(df))):
+                    arr[i] = vals[i]
+                # the bars column is lowercase, the chart's is Capitalized
+                df[col[0].upper() + col[1:]] = arr
             bar_data._df = df
-            bar_data.is_spread = True
         
-        if bar_data.is_spread:
+        # an OVERLAP keeps its assets and colors under its own settings
+        # key; the check comes FIRST because an overlap's saved bars
+        # carry series columns too (otherwise it would be read as a
+        # spread)
+        overlap_info = self.load_overlap_lines(symbol)
+        if overlap_info:
+            bar_data.is_overlap = True
+            bar_data.overlap_symbols = list(overlap_info.get('symbols', []))
+            bar_data.overlap_colors = list(overlap_info.get('colors', []))
+        elif has_series:
+            bar_data.is_spread = True
             settings_table = f'"{symbol}_settings"'
             cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('spread_lines',))
             row_s = cursor.fetchone()
@@ -935,7 +983,68 @@ class Database:
             'color2': color2
         })))
         self.conn.commit()
-    
+
+    def save_overlap(self, name: str, symbols: list, start_date: str):
+        """An overlap of any number of assets: the official symbols as a
+        JSON list, in the order the dialog chose them; an empty
+        start_date = from the first shared data date."""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO overlaps (name, symbols, start_date)
+            VALUES (?, ?, ?)
+        ''', (name, json.dumps(list(symbols)), start_date))
+        self.conn.commit()
+
+    def load_overlap(self, name: str) -> Optional[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT name, symbols, start_date FROM overlaps WHERE name = ?', (name,))
+        row = cursor.fetchone()
+        if row:
+            return {'name': row[0], 'symbols': json.loads(row[1]), 'start_date': row[2]}
+        return None
+
+    def load_overlaps(self) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT name, symbols, start_date FROM overlaps ORDER BY name')
+        return [{'name': row[0], 'symbols': json.loads(row[1]), 'start_date': row[2]}
+                for row in cursor.fetchall()]
+
+    def delete_overlap(self, name: str):
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM overlaps WHERE name = ?', (name,))
+        self.conn.commit()
+
+    def save_overlap_lines(self, symbol: str, symbols: list, colors: list):
+        """The overlap's per-asset line colors (its assets' list travels
+        with them, saved once at the creation; the colors change in the
+        chart's context menu)."""
+        self._ensure_symbol_tables(symbol)
+        cursor = self.conn.cursor()
+        settings_table = f'"{symbol}_settings"'
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO {settings_table} (key, value)
+            VALUES (?, ?)
+        ''', ('overlap_lines', json.dumps({
+            'symbols': list(symbols),
+            'colors': list(colors)
+        })))
+        self.conn.commit()
+
+    def load_overlap_lines(self, symbol: str) -> Optional[dict]:
+        """The saved overlap line info ({'symbols': [...], 'colors':
+        [...]}), None when the symbol is not an overlap."""
+        try:
+            cursor = self.conn.cursor()
+            settings_table = f'"{symbol}_settings"'
+            cursor.execute(f"SELECT value FROM {settings_table} WHERE key = ?", ('overlap_lines',))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            info = json.loads(row[0])
+            return {'symbols': info.get('symbols', []), 'colors': info.get('colors', [])}
+        except sqlite3.OperationalError:
+            return None
+
     def close(self):
         if self.conn:
             self.conn.close()
