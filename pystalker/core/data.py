@@ -43,6 +43,10 @@ class BarData:
         self.spread_symbol2 = ''
         self.spread_color1 = '#00BFFF'
         self.spread_color2 = '#FF6B6B'
+        # an overlap: any number of assets' percent lines in one chart
+        self.is_overlap = False
+        self.overlap_symbols = []
+        self.overlap_colors = []
         self.source_symbol = ''
         
     def count(self) -> int:

@@ -220,6 +220,8 @@ class PyStalkerWindow(QMainWindow):
         self.navigator.asset_selected.connect(self.on_asset_selected)
         self.navigator.spread_selected.connect(self.on_spread_selected)
         self.navigator.spread_removed.connect(self.on_spread_removed)
+        self.navigator.overlap_selected.connect(self.on_overlap_selected)
+        self.navigator.overlap_removed.connect(self.on_overlap_removed)
         self.navigator.asset_removed.connect(self.on_asset_removed)
         self.navigator.copy_graph.connect(self.on_copy_graph)
         self.navigator.rename_graph.connect(self.on_rename_graph)
@@ -275,6 +277,10 @@ class PyStalkerWindow(QMainWindow):
         create_spread_action = QAction("Create Spread...", self)
         create_spread_action.triggered.connect(self.on_create_spread)
         file_menu.addAction(create_spread_action)
+        
+        create_overlap_action = QAction("Asset Overlap...", self)
+        create_overlap_action.triggered.connect(self.on_create_overlap)
+        file_menu.addAction(create_overlap_action)
         
         file_menu.addSeparator()
         
@@ -756,6 +762,174 @@ class PyStalkerWindow(QMainWindow):
         self.database.delete_spread(name)
         self.database.delete_symbol(name)
         self.assets.remove_asset(name)
+
+    def on_create_overlap(self):
+        from .overlap_dialog import OverlapDialog
+        symbols = sorted(set(self.assets.get_symbols()) | set(self.database.get_symbols()))
+        if len(symbols) < 2:
+            QMessageBox.information(self, "Asset Overlap", "You need at least 2 assets in the database to create an overlap.")
+            return
+        overlaps = self.database.load_overlaps()
+        # the dialog lists the assets by their personalized display
+        # names; the official symbols travel underneath
+        display_names = {s: self.database.get_display_name(s) for s in symbols}
+        dialog = OverlapDialog(symbols, overlaps, display_names, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            overlap_name = dialog.get_overlap_name()
+            self.database.save_overlap(overlap_name, dialog.get_symbols(),
+                                       dialog.get_start_date())
+            self.navigator.add_overlap(overlap_name)
+            self.on_overlap_selected(overlap_name)
+    
+    def on_overlap_selected(self, name: str):
+        overlap = self.database.load_overlap(name)
+        if not overlap:
+            return
+        symbols = overlap['symbols']
+        start_date = overlap['start_date']
+        
+        # every asset's data: the memory cache first, the database second
+        assets, missing = [], []
+        for symbol in symbols:
+            asset = self.assets.get_asset(symbol)
+            if not asset:
+                cached = self.database.load_bars(symbol)
+                if cached:
+                    self.assets.add_asset(symbol, cached)
+                    asset = cached
+            if asset:
+                assets.append(asset)
+            else:
+                missing.append(symbol)
+        if missing:
+            QMessageBox.warning(self, "Overlap", "Asset data not found. Please load " + ", ".join(missing) + " first.")
+            return
+        
+        from ..core.overlap import calculate_overlap, overlap_colors
+        result = calculate_overlap([a.to_dataframe() for a in assets], start_date)
+        if result is None:
+            QMessageBox.warning(self, "Overlap", "No overlapping data found for the selected assets and date range.")
+            return
+        
+        dates, series = result
+        arrays = [s.values for s in series]
+        # High/Low span every line so the chart's range covers them all
+        high = np.maximum.reduce([np.asarray(a, dtype=float) for a in arrays])
+        low = np.minimum.reduce([np.asarray(a, dtype=float) for a in arrays])
+        data = {'Open': arrays[0], 'High': high, 'Low': low,
+                'Close': arrays[0], 'Volume': 0}
+        for k in range(2, len(arrays) + 1):
+            data[f'Series{k}'] = arrays[k - 1]
+        overlap_df = pd.DataFrame(data, index=dates)
+        
+        from ..core.data import BarData, Bar
+        bars = []
+        for i in range(len(overlap_df)):
+            idx = overlap_df.index[i]
+            if hasattr(idx, 'to_pydatetime'):
+                dt = idx.to_pydatetime()
+            else:
+                from datetime import datetime
+                dt = datetime.fromtimestamp(int(idx))
+            bars.append(Bar(
+                date=dt,
+                open=float(overlap_df['Open'].iloc[i]),
+                high=float(overlap_df['High'].iloc[i]),
+                low=float(overlap_df['Low'].iloc[i]),
+                close=float(overlap_df['Close'].iloc[i]),
+                volume=0.0
+            ))
+        bar_data = BarData(name)
+        bar_data.bars = bars
+        bar_data.is_overlap = True
+        bar_data.overlap_symbols = list(symbols)
+        # the saved colors when they exist (the context menu changes
+        # them); the default palette on the first build - the colors are
+        # saved at the creation, never overwritten on re-selection
+        saved_lines = self.database.load_overlap_lines(name)
+        bar_data.overlap_colors = (list(saved_lines['colors']) if saved_lines
+                                    else overlap_colors(len(symbols)))
+        bar_data._df = overlap_df
+        self.assets.add_asset(name, bar_data)
+        
+        # the saved bars let the session restore reopen the tab
+        self.database.save_bars(bar_data)
+        if not saved_lines:
+            self.database.save_overlap_lines(name, symbols,
+                                             bar_data.overlap_colors)
+        
+        existing_tab = self.chart_tabs.tabs.get(name)
+        if existing_tab:
+            self.chart_tabs.setCurrentWidget(existing_tab)
+            return
+        
+        self.load_chart(name)
+        
+        for s, action in self.chart_style_actions.items():
+            action.setChecked(s == 'line')
+    
+    def on_overlap_removed(self, name: str):
+        self.database.delete_overlap(name)
+        self.database.delete_symbol(name)
+        self.assets.remove_asset(name)
+
+    def on_overlap_assets_change(self):
+        """The overlap chart's context menu > Change Assets...: re-pick
+        the assets (the same dynamic list as the creator, pre-filled
+        with the current ones, the start date untouched). The auto-name
+        follows the assets (the user's choice), so the changed overlap
+        REPLACES the old entry under its new name; an asset that stays
+        keeps its line color (the user's choice), the new ones get the
+        next free palette colors."""
+        tab = self.chart_tabs.get_current_tab()
+        if not tab or not tab.symbol or not tab.chart_view.is_overlap:
+            return
+        name = tab.symbol
+        overlap = self.database.load_overlap(name)
+        if not overlap:
+            return
+        symbols = sorted(set(self.assets.get_symbols()) | set(self.database.get_symbols()))
+        if len(symbols) < 2:
+            QMessageBox.information(self, "Asset Overlap", "You need at least 2 assets in the database to change an overlap's assets.")
+            return
+        overlaps = self.database.load_overlaps()
+        display_names = {s: self.database.get_display_name(s) for s in symbols}
+        from .overlap_dialog import OverlapDialog
+        dialog = OverlapDialog(symbols, overlaps, display_names, self,
+                               initial_symbols=overlap['symbols'],
+                               title="Change Overlap Assets",
+                               show_start_date=False)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_symbols = dialog.get_symbols()
+        if list(new_symbols) == list(overlap['symbols']):
+            return                       # nothing changed
+        new_name = '/'.join(new_symbols)
+
+        # the colors: the survivors keep theirs, the new ones the next
+        # free palette colors
+        from ..core.overlap import carried_colors
+        old_lines = self.database.load_overlap_lines(name) or {}
+        new_colors = carried_colors(new_symbols,
+                                    old_lines.get('symbols', overlap['symbols']),
+                                    old_lines.get('colors', []))
+
+        # the new definition first (same start date), then the old entry
+        # goes: the navigator list, the definition, the bars and the
+        # in-memory data - the auto-name follows the assets
+        self.database.save_overlap(new_name, new_symbols, overlap['start_date'])
+        self.database.save_overlap_lines(new_name, new_symbols, new_colors)
+        self.navigator.remove_overlap(name)
+        self.navigator.add_overlap(new_name)
+        self.database.delete_overlap(name)
+        self.database.delete_symbol(name)
+        self.assets.remove_asset(name)
+        if name in self.chart_tabs.tabs:
+            del self.chart_tabs.tabs[name]
+            idx = self.chart_tabs.indexOf(tab)
+            self.chart_tabs.removeTab(idx)
+
+        self.on_overlap_selected(new_name)
     
     def on_asset_removed(self, symbol: str):
         if symbol in self.chart_tabs.tabs:
@@ -769,25 +943,44 @@ class PyStalkerWindow(QMainWindow):
     
     def on_spread_start_date_change(self):
         tab = self.chart_tabs.get_current_tab()
-        if not tab or not tab.symbol or not tab.chart_view.is_spread:
+        if not tab or not tab.symbol or not (tab.chart_view.is_spread or tab.chart_view.is_overlap):
             return
         name = tab.symbol
-        spread = self.database.load_spread(name)
-        if not spread:
-            return
+        is_overlap = tab.chart_view.is_overlap
         
-        from PyQt6.QtWidgets import QDateEdit, QDialog, QVBoxLayout, QDialogButtonBox
+        overlap = spread = None
+        if is_overlap:
+            overlap = self.database.load_overlap(name)
+            if not overlap:
+                return
+            start_date = overlap['start_date']
+        else:
+            spread = self.database.load_spread(name)
+            if not spread:
+                return
+            start_date = spread['start_date']
+        
+        from PyQt6.QtWidgets import QDateEdit, QDialog, QVBoxLayout, QDialogButtonBox, QCheckBox
         from PyQt6.QtCore import QDate
         dialog = QDialog(self)
         dialog.setWindowTitle("Change Start Date")
         layout = QVBoxLayout(dialog)
+        first_data_check = None
+        if is_overlap:
+            # an overlap can also start at the first shared data date
+            first_data_check = QCheckBox("From the first data date (the first day all the assets share)")
+            first_data_check.setChecked(start_date == '')
+            layout.addWidget(first_data_check)
         date_edit = QDateEdit()
         date_edit.setCalendarPopup(True)
-        current_date = QDate.fromString(spread['start_date'], "yyyy-MM-dd")
+        current_date = QDate.fromString(start_date, "yyyy-MM-dd")
         if not current_date.isValid():
             current_date = QDate.currentDate().addYears(-1)
         date_edit.setDate(current_date)
         date_edit.setDisplayFormat("yyyy-MM-dd")
+        if first_data_check is not None:
+            date_edit.setEnabled(not first_data_check.isChecked())
+            first_data_check.toggled.connect(lambda on: date_edit.setEnabled(not on))
         layout.addWidget(date_edit)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -797,7 +990,21 @@ class PyStalkerWindow(QMainWindow):
             return
         
         new_date = date_edit.date().toString("yyyy-MM-dd")
-        self.database.save_spread(name, spread['symbol1'], spread['symbol2'], new_date)
+        if first_data_check is not None and first_data_check.isChecked():
+            new_date = ''
+        
+        if is_overlap:
+            self.database.save_overlap(name, overlap['symbols'], new_date)
+        else:
+            self.database.save_spread(name, spread['symbol1'], spread['symbol2'], new_date)
+        
+        # the custom line colors survive the rebuild (delete_symbol drops
+        # the settings table they live in)
+        saved_colors = None
+        if is_overlap:
+            lines = self.database.load_overlap_lines(name)
+            if lines:
+                saved_colors = list(lines.get('colors', []))
         
         if name in self.chart_tabs.tabs:
             del self.chart_tabs.tabs[name]
@@ -806,7 +1013,13 @@ class PyStalkerWindow(QMainWindow):
         self.assets.remove_asset(name)
         self.database.delete_symbol(name)
         
-        self.on_spread_selected(name)
+        if is_overlap:
+            if saved_colors:
+                self.database.save_overlap_lines(name, overlap['symbols'],
+                                                 saved_colors)
+            self.on_overlap_selected(name)
+        else:
+            self.on_spread_selected(name)
     
     def on_update_all(self):
         symbols = self.database.get_symbols()
@@ -952,6 +1165,7 @@ class PyStalkerWindow(QMainWindow):
             tab.chart_view.drawModeToggled.connect(self.on_draw_mode_toggled)
             tab.chart_view.drawingDoubleClicked.connect(self.on_drawing_double_clicked)
             tab.chart_view.spreadStartDateChangeRequested.connect(self.on_spread_start_date_change)
+            tab.chart_view.overlapAssetsChangeRequested.connect(self.on_overlap_assets_change)
         
         if asset.is_spread:
             tab.chart_view.is_spread = True
@@ -960,6 +1174,15 @@ class PyStalkerWindow(QMainWindow):
             tab.chart_view.spread_color1 = asset.spread_color1
             tab.chart_view.spread_color2 = asset.spread_color2
             tab.chart_view.line_color = asset.spread_color1
+            tab.chart_view.chart_style = 'line'
+            self.database.save_chart_style(symbol, 'line')
+        elif asset.is_overlap:
+            tab.chart_view.is_overlap = True
+            tab.chart_view.overlap_symbols = list(asset.overlap_symbols)
+            tab.chart_view.overlap_colors = list(asset.overlap_colors)
+            tab.chart_view.line_color = (asset.overlap_colors[0]
+                                         if asset.overlap_colors
+                                         else '#00BFFF')
             tab.chart_view.chart_style = 'line'
             self.database.save_chart_style(symbol, 'line')
         
@@ -1617,6 +1840,9 @@ class PyStalkerWindow(QMainWindow):
         spreads = self.database.load_spreads()
         for spread in spreads:
             self.navigator.add_spread(spread['name'])
+        overlaps = self.database.load_overlaps()
+        for overlap in overlaps:
+            self.navigator.add_overlap(overlap['name'])
     
     def save_session(self):
         open_tabs = self.chart_tabs.get_open_tabs()

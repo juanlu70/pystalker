@@ -360,6 +360,7 @@ class ChartView(QWidget):
     colors_changed = pyqtSignal()
     chartStyleChanged = pyqtSignal(str)
     spreadStartDateChangeRequested = pyqtSignal()
+    overlapAssetsChangeRequested = pyqtSignal()
     drawModeToggled = pyqtSignal(bool)
     drawingDoubleClicked = pyqtSignal(object)
     limitDateChanged = pyqtSignal()
@@ -380,6 +381,13 @@ class ChartView(QWidget):
         self.spread_legend1 = None
         self.spread_legend2 = None
         self.spread_legend_diff = None
+        # an overlap: any number of assets' percent lines in one chart
+        # (the is_spread machinery's any-N sibling; no Diff line)
+        self.is_overlap = False
+        self.overlap_symbols = []
+        self.overlap_colors = []
+        self.overlap_curves = []
+        self.overlap_legends = []
         self.overlay_lines = []
         self.indicator_curves = []
         self.drawings = []
@@ -662,7 +670,16 @@ class ChartView(QWidget):
         
         menu = QMenu(self)
         
-        if self.is_spread:
+        if self.is_overlap:
+            # one color action per asset line, in the overlap's order
+            overlap_color_actions = []
+            for i, sym in enumerate(self.overlap_symbols):
+                overlap_color_actions.append(
+                    menu.addAction(f"Change {sym} Color"))
+            menu.addSeparator()
+            change_assets = menu.addAction("Change Assets...")
+            change_start_date = menu.addAction("Change Start Date")
+        elif self.is_spread:
             change_color1 = menu.addAction(f"Change {self.spread_symbol1} Color")
             change_color2 = menu.addAction(f"Change {self.spread_symbol2} Color")
             menu.addSeparator()
@@ -673,7 +690,30 @@ class ChartView(QWidget):
         
         action = menu.exec(self.plot_widget.mapToGlobal(pos))
         
-        if self.is_spread:
+        if self.is_overlap:
+            for i, color_action in enumerate(overlap_color_actions):
+                if action == color_action:
+                    menu.close()
+                    self._ignore_context_menu = True
+                    color = QColorDialog.getColor(
+                        pg.QtGui.QColor(self.overlap_colors[i]), self,
+                        f"Select {self.overlap_symbols[i]} Color")
+                    if color.isValid():
+                        self.overlap_colors[i] = color.name()
+                        if i == 0:
+                            # asset 1's line is the main line curve
+                            self.line_color = color.name()
+                        if i < len(self.overlap_legends) and self.overlap_legends[i]:
+                            self.overlap_legends[i].setColor(color.name())
+                        self.plot_candlesticks(self.df, self.symbol)
+                        self.colors_changed.emit()
+                    QTimer.singleShot(100, lambda: setattr(self, '_ignore_context_menu', False))
+                    return
+            if action == change_assets:
+                self.overlapAssetsChangeRequested.emit()
+            if action == change_start_date:
+                self.spreadStartDateChangeRequested.emit()
+        elif self.is_spread:
             if action == change_color1:
                 menu.close()
                 self._ignore_context_menu = True
@@ -1478,6 +1518,18 @@ class ChartView(QWidget):
                         v1 = self.df['Close'].iloc[x_idx]
                         v2 = self.df['Series2'].iloc[x_idx] if 'Series2' in self.df.columns else 0
                         self.info_text.setText(f"{date_str}  {self.spread_symbol1}:{v1:.2f}%  {self.spread_symbol2}:{v2:.2f}%  Spread:{v1-v2:+.2f}%")
+                    elif self.is_overlap:
+                        # every asset's percent change at the hovered
+                        # day (the series start at 0, so the values ARE
+                        # percents); asset 1 lives in Close, the rest in
+                        # their Series columns
+                        parts = [date_str]
+                        for i, sym in enumerate(self.overlap_symbols):
+                            col = 'Close' if i == 0 else f'Series{i + 1}'
+                            if col in self.df.columns:
+                                v = float(self.df[col].iloc[x_idx])
+                                parts.append(f"{sym}:{v:+.2f}%")
+                        self.info_text.setText('  '.join(parts))
                     elif self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None:
                         ha = self._ha_df
                         info = f"{date_str}  O:{ha['Open'].iloc[x_idx]:.2f}  H:{ha['High'].iloc[x_idx]:.2f}  L:{ha['Low'].iloc[x_idx]:.2f}  C:{ha['Close'].iloc[x_idx]:.2f}  V:{self.df['Volume'].iloc[x_idx]:.0f}{self._candle_change_str(ha['Open'].iloc[x_idx], ha['Close'].iloc[x_idx])}"
@@ -1742,6 +1794,8 @@ class ChartView(QWidget):
         self.spread_legend1 = None
         self.spread_legend2 = None
         self.spread_legend_diff = None
+        self.overlap_curves = []
+        self.overlap_legends = []
         self.volume_item = None
         self.indicator_curves.clear()
         
@@ -1834,6 +1888,34 @@ class ChartView(QWidget):
                 self.plot_widget.addItem(self.spread_legend2, ignoreBounds=True)
                 self.plot_widget.addItem(self.spread_legend_diff, ignoreBounds=True)
                 self._update_spread_legend_position()
+            if self.is_overlap:
+                # the overlap: asset 1's line is the main line curve; one
+                # curve per Series column for the rest, a colored legend
+                # per asset, and NO Diff line at ANY asset count (two
+                # included - the user's final word: the diff "does not
+                # show real information"; the spreads keep theirs)
+                self.overlap_curves = [self.line_curve]
+                for k in range(2, len(self.overlap_symbols) + 1):
+                    col = f'Series{k}'
+                    if col in self.df.columns:
+                        yk = self.df[col].values.astype(float)
+                        color = (self.overlap_colors[k - 1]
+                                 if k - 1 < len(self.overlap_colors)
+                                 else '#FFFFFF')
+                        curve = pg.PlotDataItem(x, yk,
+                                                pen=pg.mkPen(color=color, width=2))
+                        self.plot_widget.addItem(curve)
+                        self.overlap_curves.append(curve)
+                self.overlap_legends = []
+                for i, sym in enumerate(self.overlap_symbols):
+                    color = (self.overlap_colors[i]
+                             if i < len(self.overlap_colors) else '#FFFFFF')
+                    legend = pg.TextItem(sym, color=color, anchor=(0, 0))
+                    legend.setFont(pg.QtGui.QFont('monospace', 10,
+                                                  pg.QtGui.QFont.Weight.Bold))
+                    self.plot_widget.addItem(legend, ignoreBounds=True)
+                    self.overlap_legends.append(legend)
+                self._update_overlap_legend_position()
         elif self.chart_style == 'heikin_ashi':
             ha_df = self._heikin_ashi_df(self.df)
             self._ha_df = ha_df
@@ -1862,7 +1944,7 @@ class ChartView(QWidget):
             self.candlestick_item = CandlestickItem(candle_data, self.bull_color, self.bear_color)
             self.plot_widget.addItem(self.candlestick_item)
         
-        if 'Volume' in self.df.columns and not self.is_spread:
+        if 'Volume' in self.df.columns and not self.is_spread and not self.is_overlap:
             vol_df = self._ha_df if (self.chart_style == 'heikin_ashi' and hasattr(self, '_ha_df') and self._ha_df is not None) else self.df
             volume_data = []
             for i in range(len(self.df)):
@@ -1970,6 +2052,9 @@ class ChartView(QWidget):
                 offset = y_range * 0.03
             if self.is_spread:
                 offset *= 4
+            elif self.is_overlap:
+                # a legend line per asset plus the info line above them
+                offset *= len(self.overlap_symbols) + 1
             self.info_text.setPos(x_min + 2, y_max - offset)
     
     def update_ohlc_legend(self):
@@ -1996,6 +2081,7 @@ class ChartView(QWidget):
         except Exception:
             pass
         self._update_spread_legend_position()
+        self._update_overlap_legend_position()
     
     def _update_spread_legend_position(self):
         if not self.is_spread or self.spread_legend1 is None:
@@ -2018,6 +2104,26 @@ class ChartView(QWidget):
         except Exception:
             pass
     
+    def _update_overlap_legend_position(self):
+        """The overlap's per-asset legends: one line under the info text,
+        in the assets' order (the spread positioner's any-N sibling)."""
+        if not self.is_overlap or not self.overlap_legends:
+            return
+        try:
+            view_range = self.view_box.viewRange()
+            x_min = view_range[0][0]
+            y_max = view_range[1][1]
+            y_range = y_max - view_range[1][0]
+            view_height = self.height() if self.height() > 0 else 800
+            pts_per_pixel = y_range / view_height
+            font_size = 10
+            font_pixels = font_size * 1.333
+            gap = 1.5 * font_pixels * pts_per_pixel
+            for i, legend in enumerate(self.overlap_legends):
+                legend.setPos(x_min + 2, y_max - gap * (i + 1))
+        except Exception:
+            pass
+
     def _update_hline_labels(self):
         try:
             view_range = self.view_box.viewRange()
